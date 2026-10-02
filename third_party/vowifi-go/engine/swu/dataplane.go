@@ -219,7 +219,10 @@ func (s *Session) encapsulateInnerPacket(inner []byte) ([]byte, error) {
 		return nil, errInnerPacketSAMissing
 	}
 	if !matchSelectors(inner, s.childTSi, s.childTSr) {
-		return nil, errors.New("swu: outbound inner packet is outside negotiated traffic selectors")
+		err := fmt.Errorf("swu: outbound inner packet is outside negotiated traffic selectors: %s",
+			describeSelectorMismatch(inner, s.childTSi, s.childTSr))
+		logger.Warn("SWu outbound packet dropped by traffic selectors", zap.Error(err))
+		return nil, err
 	}
 	esp, err := ipsec.Encapsulate(inner, s.espOutboundSA)
 	if err != nil {
@@ -236,7 +239,10 @@ func (s *Session) encapsulateInnerPacketLease(inner []byte) (*packetLease, error
 		return nil, errInnerPacketSAMissing
 	}
 	if !matchSelectors(inner, s.childTSi, s.childTSr) {
-		return nil, errors.New("swu: outbound inner packet is outside negotiated traffic selectors")
+		err := fmt.Errorf("swu: outbound inner packet is outside negotiated traffic selectors: %s",
+			describeSelectorMismatch(inner, s.childTSi, s.childTSr))
+		logger.Warn("SWu outbound packet dropped by traffic selectors", zap.Error(err))
+		return nil, err
 	}
 	total, _, err := ipsec.EncapsulationLayout(len(inner), s.espOutboundSA)
 	if err != nil {
@@ -276,7 +282,8 @@ func (s *Session) decapsulateOuterESP(esp []byte) ([]byte, uint32, error) {
 		return nil, spi, fmt.Errorf("decapsulate ESP packet: %w", err)
 	}
 	if !matchInboundSelectors(inner, s.childTSi, s.childTSr) {
-		return nil, spi, errors.New("swu: inbound inner packet is outside negotiated traffic selectors")
+		return nil, spi, fmt.Errorf("swu: inbound inner packet is outside negotiated traffic selectors: %s",
+			describeSelectorMismatch(inner, s.childTSi, s.childTSr))
 	}
 	return inner, spi, nil
 }

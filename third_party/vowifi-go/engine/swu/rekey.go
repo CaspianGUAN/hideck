@@ -128,6 +128,34 @@ func matchInboundSelectors(inner []byte, tsi, tsr *ikev2.EncryptedPayloadTS) boo
 		selectorPayloadMatches(tsi, flow.destinationIP, flow.protocol, flow.destinationPort)
 }
 
+// describeSelectorMismatch renders the packet flow and negotiated selectors
+// so traffic-selector drops can be diagnosed from logs.
+func describeSelectorMismatch(inner []byte, tsi, tsr *ikev2.EncryptedPayloadTS) string {
+	flow, err := parseInnerPacketFlow(inner)
+	if err != nil {
+		return "parse_error=" + err.Error()
+	}
+	return fmt.Sprintf("src=%s:%d dst=%s:%d proto=%d inner_len=%d tsi=[%s] tsr=[%s]",
+		flow.sourceIP, flow.sourcePort, flow.destinationIP, flow.destinationPort,
+		flow.protocol, len(inner), describeSelectors(tsi), describeSelectors(tsr))
+}
+
+func describeSelectors(payload *ikev2.EncryptedPayloadTS) string {
+	if payload == nil {
+		return "nil"
+	}
+	var out []byte
+	for i, selector := range payload.TrafficSelectors {
+		if i > 0 {
+			out = append(out, ' ')
+		}
+		out = fmt.Appendf(out, "%s-%s/p%d/%d-%d",
+			net.IP(selector.StartAddr), net.IP(selector.EndAddr),
+			selector.IPProtocol, selector.StartPort, selector.EndPort)
+	}
+	return string(out)
+}
+
 type innerPacketFlow struct {
 	sourceIP, destinationIP     net.IP
 	protocol                    byte
