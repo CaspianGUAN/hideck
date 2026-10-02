@@ -116,13 +116,30 @@ type Config struct {
 	WeComBot WeComBotConfig `mapstructure:"wecom_bot"`
 	Webhook  WebhookConfig  `mapstructure:"webhook"`
 
-	Bark     BarkConfig     `mapstructure:"bark"`
-	Email    EmailConfig    `mapstructure:"email"`
-	Pushplus PushplusConfig `mapstructure:"pushplus"`
-	WeCom    WeComConfig    `mapstructure:"wecom"`
-	Web      WebConfig      `mapstructure:"web"`
-	Proxy    ProxyConfig    `mapstructure:"proxy"`
-	VoWiFi   VoWiFiConfig   `mapstructure:"vowifi"`
+	Bark     BarkConfig      `mapstructure:"bark"`
+	Email    EmailConfig     `mapstructure:"email"`
+	Pushplus PushplusConfig  `mapstructure:"pushplus"`
+	WeCom    WeComConfig     `mapstructure:"wecom"`
+	Web      WebConfig       `mapstructure:"web"`
+	Proxy    ProxyConfig     `mapstructure:"proxy"`
+	VoWiFi   VoWiFiConfig    `mapstructure:"vowifi"`
+	SIP      SIPClientConfig `mapstructure:"sip_client"`
+}
+
+// SIPClientConfig registers HiDeck as a SIP extension on a PBX (for example
+// FreePBX) so calls on the modem can be bridged to and from the PBX.
+type SIPClientConfig struct {
+	Enabled      bool   `mapstructure:"enabled"`
+	Server       string `mapstructure:"server"`        // PBX host:port
+	Transport    string `mapstructure:"transport"`     // tcp|udp，默认 tcp
+	Username     string `mapstructure:"username"`      // 分机号
+	AuthUsername string `mapstructure:"auth_username"` // 留空则同 username
+	Password     string `mapstructure:"password"`
+	LocalPort    int    `mapstructure:"local_port"`     // 本地 SIP 端口，默认 5070
+	Expires      int    `mapstructure:"expires"`        // 注册有效期(秒)，默认 300
+	DeviceID     string `mapstructure:"device_id"`      // 绑定模组，留空则使用唯一/首个设备
+	InboundTo    string `mapstructure:"inbound_target"` // 来电转发到 PBX 的分机/振铃组
+	RingTimeout  int    `mapstructure:"ring_timeout"`   // 来电振铃超时(秒)，默认 60
 }
 
 type SystemConfig struct {
@@ -376,6 +393,11 @@ func Load(path string) (*Config, error) {
 	viper.SetDefault("vowifi.enabled", false)
 	viper.SetDefault("vowifi.mode", "vowifi")
 	viper.SetDefault("imscore.use_sipgo_udp", false)
+	viper.SetDefault("sip_client.enabled", false)
+	viper.SetDefault("sip_client.transport", "tcp")
+	viper.SetDefault("sip_client.local_port", 5070)
+	viper.SetDefault("sip_client.expires", 300)
+	viper.SetDefault("sip_client.ring_timeout", 60)
 
 	// 环境变量覆盖支持 (例如 PROXY_DEVICES_0_APN)
 	viper.SetEnvPrefix("PROXY")
