@@ -383,3 +383,8 @@ func WrapPreferredAKAProvider(p AKAWithPreferenceProvider, preference string) sw
 func (a preferredAKAAdapter) CalculateAKA(rand16, autn16 []byte) (swusim.AKAResult, error) {
 	return a.p.CalculateAKAWithPreference(rand16, autn16, a.preference)
 }
+
+// CalculateISIMAKA 保留底层的严格 ISIM AKA 能力；否则包装后 runtimecore 会判定读卡器不支持 ISIM AKA。
+func (a preferredAKAAdapter) CalculateISIMAKA(rand16, autn16 []byte) (swusim.AKAResult, error) {
+	return a.p.CalculateAKAWithPreference(rand16, autn16, AKAAppPreferenceISIMStrict)
+}
