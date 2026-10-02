@@ -30,6 +30,10 @@ type bridge struct {
 
 	callID   string
 	deviceID string
+	// sipCallID and localSDP identify the PBX dialog so an in-dialog
+	// re-INVITE is answered instead of being taken for a new call.
+	sipCallID string
+	localSDP  string
 }
 
 func (c *Client) newBridge(media MediaLeg, callID, deviceID string) *bridge {
@@ -55,9 +59,19 @@ func (c *Client) setBridgeCall(b *bridge, callID string) {
 	c.byCall[callID] = b
 }
 
+func (c *Client) trackDialog(b *bridge, sipCallID, localSDP string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	b.sipCallID, b.localSDP = sipCallID, localSDP
+	c.bySIPCall[sipCallID] = b
+}
+
 func (c *Client) untrack(b *bridge) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if b.sipCallID != "" && c.bySIPCall[b.sipCallID] == b {
+		delete(c.bySIPCall, b.sipCallID)
+	}
 	if c.byCall[b.callID] == b {
 		delete(c.byCall, b.callID)
 	}
@@ -148,6 +162,12 @@ func (c *Client) hangupPhone(b *bridge) {
 // ---- PBX -> mobile (the PBX sends us an INVITE) ----
 
 func (c *Client) onInvite(request *sip.Request, tx sip.ServerTransaction) {
+	if to := request.To(); to != nil {
+		if tag, _ := to.Params.Get("tag"); tag != "" {
+			c.onReInvite(request, tx)
+			return
+		}
+	}
 	dialog, err := c.serving.ReadInvite(request, tx)
 	if err != nil {
 		_ = tx.Respond(sip.NewResponseFromRequest(request, sip.StatusBadRequest, "Bad Request", nil))
@@ -250,6 +270,9 @@ func (c *Client) startOutbound(request *sip.Request, deviceID, callee string) (*
 		return nil, "", sip.StatusServiceUnavailable
 	}
 	c.setBridgeCall(b, view.CallID)
+	if header := request.CallID(); header != nil {
+		c.trackDialog(b, header.Value(), answer)
+	}
 	return b, answer, 0
 }
 
@@ -259,6 +282,54 @@ func (c *Client) byeServer(dialog *sipgo.DialogServerSession) {
 	if err := dialog.Bye(ctx); err != nil {
 		logger.Warn("SIP BYE 发送失败", "err", err)
 	}
+}
+
+// onReInvite answers a session refresh or media change inside an existing
+// call (Asterisk sends these for direct-media attempts and before BYE).
+func (c *Client) onReInvite(request *sip.Request, tx sip.ServerTransaction) {
+	sipCallID := ""
+	if header := request.CallID(); header != nil {
+		sipCallID = header.Value()
+	}
+	c.mu.Lock()
+	b := c.bySIPCall[sipCallID]
+	answer := ""
+	if b != nil {
+		answer = b.localSDP
+	}
+	c.mu.Unlock()
+	if b == nil {
+		_ = tx.Respond(sip.NewResponseFromRequest(request, sip.StatusCallTransactionDoesNotExists, "Call/Transaction Does Not Exist", nil))
+		return
+	}
+	if offer := string(request.Body()); strings.Contains(offer, "m=audio") {
+		if host := sdpConnectionHost(offer); host != "" && host != c.settings.ServerHost {
+			// A direct-media re-INVITE points us at the PBX's phone, which
+			// cannot reach us behind NAT; refusing keeps media anchored on
+			// the PBX, which then keeps relaying.
+			logger.Info("SIP 拒绝媒体直连 re-INVITE", "call_id", b.callID, "media_host", host)
+			_ = tx.Respond(sip.NewResponseFromRequest(request, sip.StatusNotAcceptableHere, "Not Acceptable Here", nil))
+			return
+		}
+		updated, err := b.media.AnswerOffer(offer)
+		if err != nil {
+			logger.Warn("SIP re-INVITE 媒体不可用", "call_id", b.callID, "err", err)
+			_ = tx.Respond(sip.NewResponseFromRequest(request, sip.StatusNotAcceptableHere, "Not Acceptable Here", nil))
+			return
+		}
+		answer = updated
+		c.mu.Lock()
+		b.localSDP = updated
+		c.mu.Unlock()
+	}
+	response := sip.NewResponseFromRequest(request, sip.StatusOK, "OK", []byte(answer))
+	response.AppendHeader(c.contact.Clone())
+	response.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
+	if err := tx.Respond(response); err != nil {
+		logger.Warn("SIP re-INVITE 应答失败", "call_id", b.callID, "err", err)
+		return
+	}
+	logger.Info("SIP 通话内 re-INVITE 已接受", "call_id", b.callID)
 }
 
 // ---- mobile -> PBX (an incoming mobile call rings the PBX) ----
@@ -295,8 +366,14 @@ type answerResult struct {
 func (c *Client) serveInbound(b *bridge, call phone.CallView) {
 	ringCtx, stopRinging := context.WithTimeout(c.ctx, c.settings.RingTimeout)
 	defer stopRinging()
-	request := c.inboundInvite(call.Peer, b.media.OfferSDP())
+	offer := b.media.OfferSDP()
+	request := c.inboundInvite(call.Peer, offer)
 	dialog, err := c.dialogs.WriteInvite(ringCtx, request)
+	if err == nil {
+		if header := request.CallID(); header != nil {
+			c.trackDialog(b, header.Value(), offer)
+		}
+	}
 	if err != nil {
 		c.phone.ReleaseMedia(b.media)
 		logger.Warn("SIP 来电 INVITE 发送失败", "call_id", b.callID, "err", err)
@@ -491,4 +568,15 @@ func reasonPhrase(status int) string {
 	default:
 		return "Temporarily Unavailable"
 	}
+}
+
+// sdpConnectionHost returns the session or first media c= address.
+func sdpConnectionHost(sdp string) string {
+	for _, line := range strings.Split(strings.ReplaceAll(sdp, "\r\n", "\n"), "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) == 3 && strings.HasPrefix(fields[0], "c=") {
+			return strings.Trim(fields[2], "[]")
+		}
+	}
+	return ""
 }

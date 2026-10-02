@@ -125,6 +125,7 @@ type Client struct {
 	registered bool
 	byCall     map[string]*bridge
 	byMedia    map[string]*bridge
+	bySIPCall  map[string]*bridge
 }
 
 // New prepares the SIP user agent; Start begins registration and listening.
@@ -158,6 +159,7 @@ func New(settings Settings, phoneService Phone, devices Devices) (*Client, error
 		dialogs: sipgo.NewDialogClientCache(client, contact),
 		serving: sipgo.NewDialogServerCache(client, contact),
 		byCall:  make(map[string]*bridge), byMedia: make(map[string]*bridge),
+		bySIPCall: make(map[string]*bridge),
 	}
 	server.OnInvite(c.onInvite)
 	server.OnAck(c.onAck)

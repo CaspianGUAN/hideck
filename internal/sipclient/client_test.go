@@ -246,6 +246,33 @@ func TestPBXCallIsPlacedOnModemAndBridged(t *testing.T) {
 	if err := dialog.Ack(ctx); err != nil {
 		t.Fatal(err)
 	}
+	reInvite := func(sdp string) int {
+		t.Helper()
+		request := sip.NewRequest(sip.INVITE, dialog.InviteResponse.Contact().Address)
+		request.SetBody([]byte(sdp))
+		request.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
+		response, err := dialog.Do(ctx, request)
+		if err != nil {
+			t.Fatalf("re-INVITE: %v", err)
+		}
+		if response.IsSuccess() {
+			ack := sip.NewRequest(sip.ACK, dialog.InviteResponse.Contact().Address)
+			_ = dialog.WriteRequest(ack)
+		}
+		return response.StatusCode
+	}
+	if status := reInvite(testPBXSDP); status != sip.StatusOK {
+		t.Fatalf("PBX-anchored re-INVITE answered %d, want 200", status)
+	}
+	directMedia := strings.ReplaceAll(testPBXSDP, "IN IP4 127.0.0.1", "IN IP4 10.9.9.9")
+	if status := reInvite(directMedia); status != sip.StatusNotAcceptableHere {
+		t.Fatalf("direct-media re-INVITE answered %d, want 488", status)
+	}
+	select {
+	case extra := <-fake.started:
+		t.Fatalf("re-INVITE started another modem call: %+v", extra)
+	default:
+	}
 	if err := dialog.Bye(ctx); err != nil {
 		t.Fatal(err)
 	}
