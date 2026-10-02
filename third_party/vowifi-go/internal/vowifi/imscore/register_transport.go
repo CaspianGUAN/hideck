@@ -143,6 +143,7 @@ func (s *Service) dialProtectedRegistrationTCP(ctx context.Context, client, serv
 	})
 	logSecureChannelAttemptResult(attempts, err)
 	if err != nil {
+		s.logDownlinkDiagnostics("protected_tcp_dial_failed")
 		return err
 	}
 	if err := setIPSec3GPPTCPMSS(conn); err != nil {
