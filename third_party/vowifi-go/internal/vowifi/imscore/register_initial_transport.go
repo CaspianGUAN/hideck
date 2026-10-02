@@ -99,6 +99,7 @@ func (s *Service) activateInitialRegistrationTransport(
 	s.registrationIO = opened.packet
 	s.registrationTCP = opened.stream
 	s.registrationTCPProtected = false
+	s.protectedRegistrationUDP = false
 	s.registrationTransport = opened.kind
 	s.registrationRemote = cloneUDPAddr(opened.remote)
 	// A transport fallback passes nil reservations and must keep the sec-agree ports alive.
@@ -190,6 +191,7 @@ func (s *Service) closeInitialRegistrationTransport() {
 	s.registrationIO = nil
 	s.registrationTCP = nil
 	s.registrationTCPProtected = false
+	s.protectedRegistrationUDP = false
 	s.registrationTransport = ""
 	s.registrationRemote = nil
 	s.mu.Unlock()

@@ -437,6 +437,7 @@ func (s *Service) StopCurrent() {
 	s.registrationTCP = nil
 	s.registrationPreviousTCP = nil
 	s.registrationTCPProtected = false
+	s.protectedRegistrationUDP = false
 	s.registrationTransport = ""
 	s.registrationRefreshAt = time.Time{}
 	s.subscriptionRefreshAt = time.Time{}

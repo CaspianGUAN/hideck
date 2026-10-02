@@ -128,6 +128,11 @@ func (s *Service) connectProtectedRegistrationTCP(ctx context.Context, client, s
 	return s.dialProtectedRegistrationTCP(ctx, client, server)
 }
 
+// protectedTCPDialTimeout bounds the protected connect so a P-CSCF that never
+// answers TCP (e.g. one that only serves UDP on port-s) does not stall REGISTER
+// for the full kernel SYN retry budget before the UDP fallback.
+const protectedTCPDialTimeout = 15 * time.Second
+
 func (s *Service) dialProtectedRegistrationTCP(ctx context.Context, client, server securityMechanism) error {
 	registrationRemote := s.currentRegistrationRemote()
 	if registrationRemote == nil || registrationRemote.IP == nil {
@@ -139,7 +144,9 @@ func (s *Service) dialProtectedRegistrationTCP(ctx context.Context, client, serv
 		if !ipsec3gppTCPNetwork(network) {
 			return nil, fmt.Errorf("imscore: unsupported secure signaling network %q", network)
 		}
-		return s.cfg.IMSNetwork.DialTCPContext(ctx, local, remote)
+		dialCtx, cancel := context.WithTimeout(ctx, protectedTCPDialTimeout)
+		defer cancel()
+		return s.cfg.IMSNetwork.DialTCPContext(dialCtx, local, remote)
 	})
 	logSecureChannelAttemptResult(attempts, err)
 	if err != nil {

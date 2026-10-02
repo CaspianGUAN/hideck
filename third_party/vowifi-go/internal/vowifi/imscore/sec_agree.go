@@ -260,14 +260,25 @@ func (s *Service) installNegotiatedIPSec(ctx context.Context, session *registerS
 	if !externalTransport && connected && protectedRegistrationSAReplaced(session, server) {
 		return s.rollbackInstalledIPSec(errProtectedFlowNeedsFreshPorts, previousRemote)
 	}
+	useProtectedUDP := false
 	if !externalTransport && !connected {
 		if err := s.connectProtectedRegistrationTCP(ctx, client, *server); err != nil {
-			return s.rollbackInstalledIPSec(err, previousRemote)
+			if ctx.Err() != nil || !errors.Is(err, errSecureChannelDial) {
+				return s.rollbackInstalledIPSec(err, previousRemote)
+			}
+			logging.Info("IMS protected TCP unavailable, falling back to protected UDP",
+				"device", s.DeviceID(), "err", err)
+			useProtectedUDP = true
 		}
 	}
 	s.recordSecurityAgreement(session, server, verify)
 	if err := s.startProtectedUDP(client, *server); err != nil {
 		return s.rollbackInstalledIPSec(err, previousRemote)
+	}
+	if useProtectedUDP {
+		if err := s.activateProtectedRegistrationUDP(); err != nil {
+			return s.rollbackInstalledIPSec(err, previousRemote)
+		}
 	}
 	s.recordSecurityMode(decision.mode, "", false)
 	return nil

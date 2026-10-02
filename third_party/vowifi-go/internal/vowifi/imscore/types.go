@@ -173,6 +173,7 @@ type Service struct {
 	registrationTCP           net.Conn
 	registrationPreviousTCP   net.Conn
 	registrationTCPProtected  bool
+	protectedRegistrationUDP  bool
 	registrationTransport     string
 	securityServerIO          net.Listener
 	protectedUDP              *protectedUDPTransport

@@ -700,7 +700,7 @@ func (s *Service) buildRegisterRequest(
 	b.WriteString(fmt.Sprintf("REGISTER sip:%s SIP/2.0\r\n", cfg.Domain))
 	localAddress := s.registerLocalAddress(session, transport)
 	b.WriteString(fmt.Sprintf("Via: SIP/2.0/%s %s;rport;branch=%s%s\r\n",
-		transportUpper(transport), localAddress, session.branch, registerViaAlias(protected)))
+		transportUpper(transport), localAddress, session.branch, registerViaAlias(protected && !sipTransportIsUDP(transport))))
 	publicIdentity := primaryPublicIdentity(cfg)
 	if options.anonymous {
 		publicIdentity = emergency.AnonymousIMPU
@@ -1118,12 +1118,16 @@ func sipSentByPort(via string) int {
 }
 
 func (s *Service) registerRequestTransport(protected bool) string {
-	if protected {
-		return "tcp"
-	}
 	s.mu.RLock()
 	transport := s.registrationTransport
+	protectedUDP := s.protectedRegistrationUDP
 	s.mu.RUnlock()
+	if protected {
+		if protectedUDP {
+			return "udp"
+		}
+		return "tcp"
+	}
 	if transport != "" {
 		return transport
 	}
