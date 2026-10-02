@@ -38,6 +38,7 @@ type MediaSession struct {
 	silentWorker     sync.WaitGroup
 	silentStarted    bool
 	receiveOnly      bool
+	external         *externalLeg
 	fromIMS          atomic.Uint64
 	toIMS            atomic.Uint64
 	lost             atomic.Uint64
@@ -200,7 +201,13 @@ func (s *MediaSession) Close() error {
 		if codec != nil {
 			result = errors.Join(result, codec.Close())
 		}
-		result = errors.Join(result, s.peer.Close(), s.rtpConn.Close())
+		if s.peer != nil {
+			result = errors.Join(result, s.peer.Close())
+		}
+		if s.external != nil {
+			result = errors.Join(result, s.external.conn.Close())
+		}
+		result = errors.Join(result, s.rtpConn.Close())
 	})
 	return result
 }

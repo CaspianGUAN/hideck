@@ -26,6 +26,7 @@ import (
 	"github.com/yibaiba/hideck/internal/phone"
 	proxyserver "github.com/yibaiba/hideck/internal/proxy/server"
 	"github.com/yibaiba/hideck/internal/proxy/traffic"
+	"github.com/yibaiba/hideck/internal/sipclient"
 	"github.com/yibaiba/hideck/internal/upstreamproxy"
 	"github.com/yibaiba/hideck/internal/volte"
 
@@ -236,6 +237,7 @@ func main() {
 	apiServer.SetVoiceRecordingDirectory(voiceRecordingDirectory)
 	apiServer.SetPhoneService(phoneService)
 	apiServer.SetRealtimeTraffic(realtimeTraffic)
+	sipClient := startSIPClient(cfg.SIP, phoneService, pool)
 
 	syncProxyConfigs := func(reason, deviceID string) {
 		if err := apiServer.SyncProxyConfigs(); err != nil {
@@ -283,6 +285,9 @@ func main() {
 
 	done := make(chan struct{})
 	go func() {
+		if sipClient != nil {
+			sipClient.Stop()
+		}
 		if err := apiServer.Shutdown(shutdownCtx); err != nil {
 			logger.Error("关闭 API 服务器时出错", "err", err)
 		}
@@ -319,6 +324,40 @@ func main() {
 	}
 
 	logger.Info("再见!")
+}
+
+// startSIPClient registers HiDeck as a PBX extension when sip_client is enabled.
+func startSIPClient(cfg config.SIPClientConfig, phoneService *phone.Service, pool *device.Pool) *sipclient.Client {
+	if !cfg.Enabled {
+		return nil
+	}
+	settings, err := sipclient.SettingsFromConfig(cfg)
+	if err != nil {
+		logger.Error("SIP 客户端配置无效", "err", err)
+		return nil
+	}
+	client, err := sipclient.New(settings, sipclient.PhoneService{Service: phoneService}, poolDevices{pool})
+	if err != nil {
+		logger.Error("SIP 客户端初始化失败", "err", err)
+		return nil
+	}
+	client.Start()
+	return client
+}
+
+type poolDevices struct{ pool *device.Pool }
+
+func (d poolDevices) DeviceIDs() []string {
+	workers := d.pool.GetAllWorkers()
+	ids := make([]string, 0, len(workers))
+	for _, worker := range workers {
+		ids = append(ids, worker.ID)
+	}
+	return ids
+}
+
+func (d poolDevices) PrepareCall(ctx context.Context, deviceID string) error {
+	return d.pool.PrepareCellularCall(ctx, deviceID)
 }
 
 func availableRealtimeCodecs(transcoder *audiotranscode.Transcoder) []string {

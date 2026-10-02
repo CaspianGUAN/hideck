@@ -23,25 +23,31 @@ func (s *MediaSession) forwardBrowserRTP(track *webrtc.TrackRemote) {
 		if err != nil {
 			return
 		}
-		endpoint, codec, ok := s.endpoint()
-		if !ok {
-			continue
-		}
-		s.recordMixedFrame(mixToIMS, packet.Payload)
-		packet.Payload, err = browserPayloadForIMS(packet.Payload, endpoint, codec)
-		if err != nil {
-			s.lost.Add(1)
-			continue
-		}
-		packet.PayloadType = endpoint.PayloadType
-		packet.Timestamp = scaleTimestamp(packet.Timestamp, browserClockRate, endpoint.ClockRate)
-		raw, err := packet.Marshal()
-		if err != nil {
-			continue
-		}
-		if _, err := s.rtpConn.WriteToUDP(raw, endpoint.Address); err == nil {
-			s.toIMS.Add(1)
-		}
+		s.forwardBrowserPacket(packet)
+	}
+}
+
+// forwardBrowserPacket relays one 20ms PCMU frame from the client leg to IMS.
+func (s *MediaSession) forwardBrowserPacket(packet *rtp.Packet) {
+	endpoint, codec, ok := s.endpoint()
+	if !ok {
+		return
+	}
+	s.recordMixedFrame(mixToIMS, packet.Payload)
+	payload, err := browserPayloadForIMS(packet.Payload, endpoint, codec)
+	if err != nil {
+		s.lost.Add(1)
+		return
+	}
+	packet.Payload = payload
+	packet.PayloadType = endpoint.PayloadType
+	packet.Timestamp = scaleTimestamp(packet.Timestamp, browserClockRate, endpoint.ClockRate)
+	raw, err := packet.Marshal()
+	if err != nil {
+		return
+	}
+	if _, err := s.rtpConn.WriteToUDP(raw, endpoint.Address); err == nil {
+		s.toIMS.Add(1)
 	}
 }
 
@@ -97,6 +103,12 @@ func (s *MediaSession) writeBrowserRTP(packet *rtp.Packet) {
 	s.recordMixedFrame(mixFromIMS, payload)
 	packet.PayloadType = pcmPayloadType
 	packet.Timestamp = scaleTimestamp(packet.Timestamp, endpoint.ClockRate, browserClockRate)
+	if s.external != nil {
+		if s.external.write(packet) == nil {
+			s.fromIMS.Add(1)
+		}
+		return
+	}
 	if err := s.track.WriteRTP(packet); err == nil {
 		s.fromIMS.Add(1)
 	}
