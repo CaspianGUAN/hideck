@@ -1,6 +1,7 @@
 package imscore
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -10,11 +11,15 @@ import (
 
 type secureChannelDial func(string) (net.Conn, error)
 
+// errSecureChannelDial marks a protected TCP connect that never reached the
+// P-CSCF, as opposed to a local setup failure.
+var errSecureChannelDial = errors.New("secure signaling channel TCP dial failed")
+
 func dialSecureChannelWithFallback(dial secureChannelDial) (net.Conn, []string, error) {
 	conn, err := dial("tcp")
 	if err != nil {
 		annotation := "tcp:error=" + strings.TrimSpace(err.Error())
-		return nil, []string{annotation}, fmt.Errorf("secure signaling channel TCP dial failed: %w", err)
+		return nil, []string{annotation}, fmt.Errorf("%w: %w", errSecureChannelDial, err)
 	}
 	return conn, []string{"tcp:ok"}, nil
 }

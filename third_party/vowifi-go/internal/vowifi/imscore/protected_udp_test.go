@@ -241,3 +241,25 @@ func TestProtectedUDPRejectsWrongPeerAndReportsReceiverFailure(t *testing.T) {
 		t.Fatal("receiver failure was hidden")
 	}
 }
+
+func TestProtectedRegistrationUDPFallbackSendsFromPortCToPortS(t *testing.T) {
+	s, _, _ := newInboundSMSTestService(t)
+	_, _, remoteS := startProtectedTestUDP(t, s)
+	if err := s.activateProtectedRegistrationUDP(); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.registerRequestTransport(true); got != "udp" {
+		t.Fatalf("protected REGISTER transport = %q, want udp", got)
+	}
+	request := "REGISTER sip:ims.example SIP/2.0\r\nCSeq: 3 REGISTER\r\nContent-Length: 0\r\n\r\n"
+	if err := s.transport.Send(request); err != nil {
+		t.Fatal(err)
+	}
+	if got := readProtectedTestUDP(t, remoteS); got != request {
+		t.Fatalf("P-CSCF port-s received %q", got)
+	}
+	s.closeProtectedUDP()
+	if got := s.registerRequestTransport(true); got != "tcp" {
+		t.Fatalf("protected REGISTER transport after close = %q, want tcp", got)
+	}
+}

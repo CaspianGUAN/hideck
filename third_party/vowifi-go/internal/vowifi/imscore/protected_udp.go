@@ -64,6 +64,7 @@ func (s *Service) closeProtectedUDP() {
 	s.mu.Lock()
 	path := s.protectedUDP
 	s.protectedUDP = nil
+	s.protectedRegistrationUDP = false
 	s.udpDownlinkProven.Store(false)
 	s.mu.Unlock()
 	if path != nil {
@@ -141,6 +142,7 @@ func (s *Service) handleProtectedUDPFailure(path *protectedUDPTransport, cause e
 		return
 	}
 	s.protectedUDP = nil
+	s.protectedRegistrationUDP = false
 	s.udpDownlinkProven.Store(false)
 	s.regState = regFailed
 	s.signalingReady = false
@@ -185,4 +187,25 @@ func (peer *protectedUDPPeer) SetReadDeadline(time.Time) error {
 }
 func (peer *protectedUDPPeer) SetWriteDeadline(at time.Time) error {
 	return peer.path.client.SetWriteDeadline(at)
+}
+
+// activateProtectedRegistrationUDP routes the protected REGISTER over the
+// negotiated UDP SAs (port-c -> P-CSCF port-s) when protected TCP is not used.
+func (s *Service) activateProtectedRegistrationUDP() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	path := s.protectedUDP
+	if path == nil {
+		return errors.New("imscore: protected UDP path is not running")
+	}
+	peer := &protectedUDPPeer{service: s, path: path}
+	s.protectedRegistrationUDP = true
+	s.registrationTransport = "udp"
+	s.transport.SetSendFn(func(request string) error {
+		_, err := peer.Write([]byte(request))
+		return err
+	})
+	logging.Info("IMS protected REGISTER using UDP", "device", s.DeviceID(),
+		"local", path.client.LocalAddr(), "remote", path.remoteServer)
+	return nil
 }
