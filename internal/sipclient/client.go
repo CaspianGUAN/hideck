@@ -27,8 +27,18 @@ const (
 	userAgentName         = "HiDeck"
 )
 
+const (
+	// ModeRegister registers as an extension; the PBX reaches us over the
+	// registration flow, which also works across NAT.
+	ModeRegister = "register"
+	// ModeTrunk is an IP-authenticated trunk with no registration, for a
+	// PBX on the same host or LAN that can reach our listen port directly.
+	ModeTrunk = "trunk"
+)
+
 // Settings is the normalized form of config.SIPClientConfig.
 type Settings struct {
+	Mode         string
 	ServerHost   string
 	ServerPort   int
 	Transport    string
@@ -49,6 +59,7 @@ func SettingsFromConfig(cfg config.SIPClientConfig) (Settings, error) {
 		return Settings{}, err
 	}
 	settings := Settings{
+		Mode:       strings.ToLower(strings.TrimSpace(cfg.Mode)),
 		ServerHost: host, ServerPort: port,
 		Transport:    strings.ToLower(strings.TrimSpace(cfg.Transport)),
 		Username:     strings.TrimSpace(cfg.Username),
@@ -60,14 +71,23 @@ func SettingsFromConfig(cfg config.SIPClientConfig) (Settings, error) {
 		InboundTo:    strings.TrimSpace(cfg.InboundTo),
 		RingTimeout:  time.Duration(cfg.RingTimeout) * time.Second,
 	}
+	if settings.Mode == "" {
+		settings.Mode = ModeRegister
+	}
+	if settings.Mode != ModeRegister && settings.Mode != ModeTrunk {
+		return Settings{}, fmt.Errorf("sipclient: unsupported mode %q", cfg.Mode)
+	}
 	if settings.Transport == "" {
 		settings.Transport = "tcp"
 	}
 	if settings.Transport != "tcp" && settings.Transport != "udp" {
 		return Settings{}, fmt.Errorf("sipclient: unsupported transport %q", cfg.Transport)
 	}
-	if settings.Username == "" {
+	if settings.Username == "" && settings.Mode == ModeRegister {
 		return Settings{}, errors.New("sipclient: username is required")
+	}
+	if settings.Username == "" {
+		settings.Username = "hideck"
 	}
 	if settings.AuthUsername == "" {
 		settings.AuthUsername = settings.Username
@@ -116,6 +136,8 @@ type Client struct {
 	dialogs *sipgo.DialogClientCache
 	serving *sipgo.DialogServerCache
 
+	pbxIPs []net.IP
+
 	ctx      context.Context
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
@@ -133,6 +155,10 @@ func New(settings Settings, phoneService Phone, devices Devices) (*Client, error
 	localIP, err := routeLocalIP(settings.ServerHost, settings.ServerPort)
 	if err != nil {
 		return nil, err
+	}
+	pbxIPs, err := net.LookupIP(settings.ServerHost)
+	if err != nil || len(pbxIPs) == 0 {
+		return nil, fmt.Errorf("sipclient: resolve PBX host %q: %w", settings.ServerHost, err)
 	}
 	ua, err := sipgo.NewUA(sipgo.WithUserAgent(userAgentName), sipgo.WithUserAgentHostname(localIP))
 	if err != nil {
@@ -154,7 +180,7 @@ func New(settings Settings, phoneService Phone, devices Devices) (*Client, error
 	contact := sip.ContactHeader{Address: contactURI}
 	c := &Client{
 		settings: settings, phone: phoneService, devices: devices,
-		owner: "sip:" + settings.Username, localIP: localIP,
+		owner: "sip:" + settings.Username, localIP: localIP, pbxIPs: pbxIPs,
 		ua: ua, client: client, server: server, contact: contact,
 		dialogs: sipgo.NewDialogClientCache(client, contact),
 		serving: sipgo.NewDialogServerCache(client, contact),
@@ -172,16 +198,21 @@ func New(settings Settings, phoneService Phone, devices Devices) (*Client, error
 func (c *Client) Start() {
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.listen()
-	c.wg.Add(2)
-	go func() {
-		defer c.wg.Done()
-		c.registerLoop()
-	}()
+	c.wg.Add(1)
+	if c.settings.Mode == ModeTrunk {
+		c.setRegistered(true)
+	} else {
+		c.wg.Add(1)
+		go func() {
+			defer c.wg.Done()
+			c.registerLoop()
+		}()
+	}
 	go func() {
 		defer c.wg.Done()
 		c.followPhoneEvents()
 	}()
-	logger.Info("SIP 客户端已启动", "server", c.serverAddr(), "transport", c.settings.Transport,
+	logger.Info("SIP 客户端已启动", "mode", c.settings.Mode, "server", c.serverAddr(), "transport", c.settings.Transport,
 		"username", c.settings.Username, "local_ip", c.localIP, "local_port", c.settings.LocalPort)
 }
 
@@ -190,10 +221,12 @@ func (c *Client) Stop() {
 	if c.cancel == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	if _, err := c.register(ctx, 0); err != nil {
-		logger.Warn("SIP 注销失败", "err", err)
+	if c.settings.Mode == ModeRegister {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		if _, err := c.register(ctx, 0); err != nil {
+			logger.Warn("SIP 注销失败", "err", err)
+		}
+		cancel()
 	}
 	c.cancel()
 	if c.listener != nil {
@@ -366,4 +399,24 @@ func routeLocalIP(host string, port int) (string, error) {
 	}
 	defer conn.Close()
 	return conn.LocalAddr().(*net.UDPAddr).IP.String(), nil
+}
+
+// fromPBX reports whether a request came from the configured PBX. Calls are
+// placed on the modem only for the PBX, never for other hosts that can reach
+// the listen port.
+func (c *Client) fromPBX(request *sip.Request) bool {
+	host, _, err := net.SplitHostPort(request.Source())
+	if err != nil {
+		host = request.Source()
+	}
+	source := net.ParseIP(strings.Trim(host, "[]"))
+	if source == nil {
+		return false
+	}
+	for _, ip := range c.pbxIPs {
+		if ip.Equal(source) || (ip.IsLoopback() && source.IsLoopback()) {
+			return true
+		}
+	}
+	return false
 }

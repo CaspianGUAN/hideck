@@ -130,6 +130,7 @@ type Config struct {
 // FreePBX) so calls on the modem can be bridged to and from the PBX.
 type SIPClientConfig struct {
 	Enabled      bool   `mapstructure:"enabled"`
+	Mode         string `mapstructure:"mode"`          // register(注册为分机)|trunk(IP 中继，不注册)，默认 register
 	Server       string `mapstructure:"server"`        // PBX host:port
 	Transport    string `mapstructure:"transport"`     // tcp|udp，默认 tcp
 	Username     string `mapstructure:"username"`      // 分机号
@@ -394,6 +395,7 @@ func Load(path string) (*Config, error) {
 	viper.SetDefault("vowifi.mode", "vowifi")
 	viper.SetDefault("imscore.use_sipgo_udp", false)
 	viper.SetDefault("sip_client.enabled", false)
+	viper.SetDefault("sip_client.mode", "register")
 	viper.SetDefault("sip_client.transport", "tcp")
 	viper.SetDefault("sip_client.local_port", 5070)
 	viper.SetDefault("sip_client.expires", 300)

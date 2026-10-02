@@ -373,15 +373,82 @@ func TestSettingsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if settings.ServerHost != "192.168.8.244" || settings.ServerPort != 50600 || settings.Transport != "tcp" ||
+	if settings.Mode != ModeRegister || settings.ServerHost != "192.168.8.244" || settings.ServerPort != 50600 || settings.Transport != "tcp" ||
 		settings.LocalPort != defaultLocalPort || settings.AuthUsername != "9001" {
 		t.Fatalf("settings = %+v", settings)
 	}
 	if _, err := SettingsFromConfig(configForTest("")); err == nil {
 		t.Fatal("empty server accepted")
 	}
+	trunk := configForTest("127.0.0.1:5060")
+	trunk.Mode, trunk.Username = "trunk", ""
+	if settings, err := SettingsFromConfig(trunk); err != nil || settings.Mode != ModeTrunk {
+		t.Fatalf("trunk settings = %+v, %v", settings, err)
+	}
+	invalid := configForTest("127.0.0.1:5060")
+	invalid.Mode = "peer"
+	if _, err := SettingsFromConfig(invalid); err == nil {
+		t.Fatal("unknown mode accepted")
+	}
 }
 
 func configForTest(server string) config.SIPClientConfig {
 	return config.SIPClientConfig{Enabled: true, Server: server, Username: "9001", Password: "secret"}
+}
+
+func TestTrunkModeSkipsRegistrationAndPresentsCaller(t *testing.T) {
+	pbx := startFakePBX(t)
+	fake := newFakePhone()
+	settings, _ := SettingsFromConfigForTest(pbx.port, freeTCPPort(t))
+	settings.Mode, settings.Password = ModeTrunk, ""
+	client, err := New(settings, fake, fakeDevices{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Start()
+	t.Cleanup(client.Stop)
+	if !client.isRegistered() {
+		t.Fatal("trunk mode should be ready without registering")
+	}
+
+	fake.stream <- phone.Event{Type: "incoming_call", Call: phone.CallView{
+		CallID: "in-2", DeviceID: "dev1", Direction: "inbound", Peer: "+12135550199", Status: phone.StatusRinging,
+	}}
+	select {
+	case invite := <-pbx.invites:
+		if user := invite.From().Address.User; user != "+12135550199" {
+			t.Fatalf("trunk INVITE From user = %q, want caller", user)
+		}
+		if invite.Recipient.User != "1001" {
+			t.Fatalf("trunk INVITE target = %q", invite.Recipient.User)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("incoming modem call did not reach the trunk")
+	}
+	select {
+	case request := <-pbx.registers:
+		t.Fatalf("trunk mode sent REGISTER: %s", request.StartLine())
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestFromPBXAcceptsOnlyThePBXAddress(t *testing.T) {
+	client := &Client{pbxIPs: []net.IP{net.ParseIP("192.168.8.244")}}
+	check := func(source string) bool {
+		request := sip.NewRequest(sip.INVITE, sip.Uri{Host: "127.0.0.1"})
+		request.SetSource(source)
+		return client.fromPBX(request)
+	}
+	if !check("192.168.8.244:50600") {
+		t.Fatal("PBX address rejected")
+	}
+	if check("192.168.8.50:5060") {
+		t.Fatal("non-PBX address accepted")
+	}
+	loopback := &Client{pbxIPs: []net.IP{net.ParseIP("127.0.0.1")}}
+	request := sip.NewRequest(sip.INVITE, sip.Uri{Host: "127.0.0.1"})
+	request.SetSource("[::1]:5060")
+	if !loopback.fromPBX(request) {
+		t.Fatal("loopback PBX rejected over ::1")
+	}
 }
