@@ -162,6 +162,11 @@ func (c *Client) hangupPhone(b *bridge) {
 // ---- PBX -> mobile (the PBX sends us an INVITE) ----
 
 func (c *Client) onInvite(request *sip.Request, tx sip.ServerTransaction) {
+	if !c.fromPBX(request) {
+		logger.Warn("拒绝非 PBX 来源的 SIP INVITE", "source", request.Source())
+		_ = tx.Respond(sip.NewResponseFromRequest(request, sip.StatusForbidden, "Forbidden", nil))
+		return
+	}
 	if to := request.To(); to != nil {
 		if tag, _ := to.Params.Get("tag"); tag != "" {
 			c.onReInvite(request, tx)
@@ -226,6 +231,15 @@ func (c *Client) serveOutbound(request *sip.Request, dialog *sipgo.DialogServerS
 				return
 			}
 		case <-dialog.Context().Done():
+			c.hangupPhone(b)
+			return
+		case <-c.ctx.Done():
+			// Shutting down: end both legs rather than leaving the call up.
+			if answered {
+				c.byeServer(dialog)
+			} else {
+				_ = dialog.Respond(sip.StatusServiceUnavailable, reasonPhrase(sip.StatusServiceUnavailable), nil)
+			}
 			c.hangupPhone(b)
 			return
 		}
@@ -451,6 +465,10 @@ func (c *Client) bridgeAnsweredInbound(b *bridge, dialog *sipgo.DialogClientSess
 		case <-dialog.Context().Done():
 			c.hangupPhone(b)
 			return
+		case <-c.ctx.Done():
+			c.byeClient(dialog)
+			c.hangupPhone(b)
+			return
 		}
 	}
 }
@@ -467,7 +485,16 @@ func (c *Client) inboundInvite(caller, offer string) *sip.Request {
 	request := sip.NewRequest(sip.INVITE, c.serverURI(c.settings.InboundTo))
 	request.SetTransport(strings.ToUpper(c.settings.Transport))
 	display := strings.TrimSpace(caller)
-	from := &sip.FromHeader{DisplayName: display, Address: c.aor(), Params: sip.NewParams()}
+	fromAddress := c.aor()
+	if c.settings.Mode == ModeTrunk {
+		// A trunk presents the caller as the From user, which the PBX's
+		// inbound route shows as caller ID.
+		fromAddress = sip.Uri{Scheme: "sip", User: callerIdentity(caller), Host: c.localIP}
+		if fromAddress.User == "" {
+			fromAddress.User = "anonymous"
+		}
+	}
+	from := &sip.FromHeader{DisplayName: display, Address: fromAddress, Params: sip.NewParams()}
 	from.Params.Add("tag", sip.GenerateTagN(16))
 	request.AppendHeader(from)
 	request.AppendHeader(&sip.ToHeader{Address: sip.Uri{Scheme: "sip", User: c.settings.InboundTo, Host: c.settings.ServerHost}})
