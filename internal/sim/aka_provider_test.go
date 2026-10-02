@@ -280,6 +280,23 @@ func TestWrapPreferredAKAProviderReturnsSWUAKAProvider(t *testing.T) {
 	}
 }
 
+func TestWrapPreferredAKAProviderKeepsISIMAKACapability(t *testing.T) {
+	stub := &akaWithPreferenceProviderStub{}
+
+	wrapped := WrapPreferredAKAProvider(stub, AKAAppPreferenceUSIM)
+	isimProvider, ok := wrapped.(swusim.ISIMAKAProvider)
+	if !ok {
+		t.Fatal("wrapped provider does not implement ISIMAKAProvider")
+	}
+
+	if _, err := isimProvider.CalculateISIMAKA(bytes16(0x10), bytes16(0x20)); err != nil {
+		t.Fatalf("CalculateISIMAKA() error = %v", err)
+	}
+	if stub.lastPreferenceUsed != AKAAppPreferenceISIMStrict {
+		t.Fatalf("lastPreferenceUsed = %q, want %q", stub.lastPreferenceUsed, AKAAppPreferenceISIMStrict)
+	}
+}
+
 func bytes16(start byte) []byte {
 	out := make([]byte, 16)
 	for i := range out {
