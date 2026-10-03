@@ -1062,6 +1062,23 @@ func overviewDetailLiveRefreshRequested(c *gin.Context) bool {
 	return false
 }
 
+// keepFileDeviceBindings 撤销 GET config 的运行时投影：配置页把运行时解析出的
+// 接口/控制口/AT 口/USB 路径只读回传，原样写回会把按 IMEI 自动绑定的设备钉死在
+// 当前端口上，并被判定为网络配置变更而重建 Worker（VoWiFi 随之断开）。
+// 回传值与运行时一致时保留配置文件里的原值。
+func keepFileDeviceBindings(next, file, runtime config.DeviceConfig) config.DeviceConfig {
+	keep := func(submitted *string, fileValue, runtimeValue string) {
+		if runtimeValue != "" && *submitted == runtimeValue {
+			*submitted = fileValue
+		}
+	}
+	keep(&next.Interface, file.Interface, runtime.Interface)
+	keep(&next.ControlDevice, file.ControlDevice, runtime.ControlDevice)
+	keep(&next.ATPort, file.ATPort, runtime.ATPort)
+	keep(&next.USBPath, file.USBPath, runtime.USBPath)
+	return next
+}
+
 func (s *Server) handleDeviceMgmtGetDeviceConfig(c *gin.Context) {
 	id := deviceIDParam(c)
 	if id == "" {
@@ -1524,6 +1541,14 @@ func (s *Server) handleDeviceMgmtUpdateDevice(c *gin.Context) {
 	}
 
 	oldCfg := *oldMD
+	if worker := s.pool.GetWorker(id); worker != nil {
+		newCfg = keepFileDeviceBindings(newCfg, oldCfg, config.DeviceConfig{
+			Interface:     worker.Config.Interface,
+			ControlDevice: worker.Config.ControlDevice,
+			ATPort:        worker.ResolvedATPort(),
+			USBPath:       worker.Config.USBPath,
+		})
+	}
 	// 策略跟卡走：设备保存只负责硬件/身份字段，不再触碰策略（策略经 PUT /cards/:iccid/policy 独立编辑）。
 	// DTO 仍会回传 network/vowifi/ip/apn，但 GET config 不投影这些字段（恒零），直接采信会把卡策略清空。
 	// 故把当前有效策略同时写回 oldCfg 与 newCfg，使其在开关转换判断中互相抵消（中性化），
