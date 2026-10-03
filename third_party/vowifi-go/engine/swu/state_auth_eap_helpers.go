@@ -60,12 +60,12 @@ func (s *Session) appendAKAChallengeMetaAttrs(
 		filtered = append(filtered, eapaka.ResultIndAttribute())
 	}
 	if includeCheckcode && hasCheckcode {
+		// RFC 4187 10.13: a challenge carrying AT_CHECKCODE must be answered
+		// with AT_CHECKCODE, empty when no AKA-Identity messages were
+		// exchanged. Omitting it made AIS (520/03) send EAP-Failure.
 		value, err := checkcode.CheckcodeValue()
 		if err == nil {
-			resolved := s.resolveATCheckcodeValue(modeForCheckcode(mode), request.Type, true, value, len(value) > 0)
-			if len(resolved) >= 2 {
-				filtered = append(filtered, eapaka.CheckcodeAttribute(resolved[2:]))
-			}
+			filtered = append(filtered, eapaka.CheckcodeAttribute(s.challengeCheckcode(mode, request.Type, value)))
 		}
 	}
 	return append(filtered, eapaka.MACAttribute(nil))
@@ -222,4 +222,22 @@ func eapAttrDigest(value []byte) string {
 	}
 	digest := sha256.Sum256(value)
 	return fmt.Sprintf("len=%d sha256=%x", len(value), digest[:8])
+}
+
+// challengeCheckcode returns the AT_CHECKCODE value (without the reserved
+// bytes) for a challenge response; nil encodes the empty checkcode.
+func (s *Session) challengeCheckcode(mode string, eapType uint8, serverValue []byte) []byte {
+	checkcodeMode := modeForCheckcode(mode)
+	if checkcodeMode == "recompute" && len(s.eapTranscript) == 0 {
+		return nil
+	}
+	resolved := s.resolveATCheckcodeValue(checkcodeMode, eapType, true, serverValue, len(serverValue) > 0)
+	if checkcodeMode == "recompute" {
+		// recompute prefixes the two reserved bytes.
+		if len(resolved) > 2 {
+			return resolved[2:]
+		}
+		return nil
+	}
+	return resolved
 }

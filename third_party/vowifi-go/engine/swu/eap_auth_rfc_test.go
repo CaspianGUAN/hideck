@@ -510,3 +510,61 @@ func hmacSHA1(key, data []byte) []byte {
 	_, _ = mac.Write(data)
 	return mac.Sum(nil)
 }
+
+func challengeWithCheckcode(attrs ...eapaka.Attribute) eapaka.Packet {
+	return eapaka.Packet{
+		Code: eapaka.CodeRequest, Type: eapaka.TypeAKA, Subtype: eapaka.SubtypeChallenge,
+		Attributes: attrs,
+	}
+}
+
+func responseCheckcode(t *testing.T, attrs []eapaka.Attribute) ([]byte, bool) {
+	t.Helper()
+	attr, ok := eapaka.FindAttribute(attrs, eapaka.AttributeCheckcode)
+	if !ok {
+		return nil, false
+	}
+	value, err := attr.CheckcodeValue()
+	if err != nil {
+		t.Fatalf("response AT_CHECKCODE: %v", err)
+	}
+	return value, true
+}
+
+// AIS (520/03) sends an empty AT_CHECKCODE and refuses a response without one.
+func TestChallengeResponseAnswersEmptyCheckcode(t *testing.T) {
+	for _, mode := range []string{"", "minimal", "checkcode", "recompute"} {
+		session := NewSession(&Config{AKAChallengeMode: mode})
+		attrs := session.appendAKAChallengeMetaAttrs(nil, challengeWithCheckcode(eapaka.CheckcodeAttribute(nil)))
+		value, ok := responseCheckcode(t, attrs)
+		if !ok || len(value) != 0 {
+			t.Fatalf("mode %q: AT_CHECKCODE present=%v value=%x, want empty", mode, ok, value)
+		}
+	}
+}
+
+func TestChallengeResponseEchoesFullCheckcode(t *testing.T) {
+	digest := bytes.Repeat([]byte{0x5a}, 20)
+	session := NewSession(&Config{AKAChallengeMode: "minimal"})
+	attrs := session.appendAKAChallengeMetaAttrs(nil, challengeWithCheckcode(eapaka.CheckcodeAttribute(digest)))
+	if value, ok := responseCheckcode(t, attrs); !ok || !bytes.Equal(value, digest) {
+		t.Fatalf("AT_CHECKCODE present=%v value=%x, want %x", ok, value, digest)
+	}
+}
+
+// T-Mobile's challenge carries no AT_CHECKCODE; the response must not add one.
+func TestChallengeResponseOmitsCheckcodeWhenNotAsked(t *testing.T) {
+	session := NewSession(&Config{})
+	attrs := session.appendAKAChallengeMetaAttrs(nil, challengeWithCheckcode())
+	if _, ok := responseCheckcode(t, attrs); ok {
+		t.Fatal("AT_CHECKCODE added to a challenge that did not carry one")
+	}
+}
+
+func TestChallengeResponseOffModeStillOmitsCheckcode(t *testing.T) {
+	session := NewSession(&Config{AKAChallengeMode: "off"})
+	attrs := session.appendAKAChallengeMetaAttrs(nil, challengeWithCheckcode(eapaka.CheckcodeAttribute(nil)))
+	if _, ok := responseCheckcode(t, attrs); ok {
+		t.Fatal("off mode sent AT_CHECKCODE")
+	}
+}
