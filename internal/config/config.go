@@ -124,6 +124,8 @@ type Config struct {
 	Proxy    ProxyConfig     `mapstructure:"proxy"`
 	VoWiFi   VoWiFiConfig    `mapstructure:"vowifi"`
 	SIP      SIPClientConfig `mapstructure:"sip_client"`
+	// SIPClients 每张卡一条 SIP 线路（各自 device_id、local_port），与 sip_client 可并存。
+	SIPClients []SIPClientConfig `mapstructure:"sip_clients"`
 }
 
 // SIPClientConfig registers HiDeck as a SIP extension on a PBX (for example

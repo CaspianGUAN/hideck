@@ -45,14 +45,33 @@ type fakePhone struct {
 	started  chan phone.StartCallRequest
 	answered chan phone.ControlRequest
 	hungup   chan string
-	stream   chan phone.Event
+	// stream fans out to every subscriber, like the phone service does.
+	stream      chan phone.Event
+	subscribers []chan phone.Event
 }
 
 func newFakePhone() *fakePhone {
-	return &fakePhone{
+	p := &fakePhone{
 		started: make(chan phone.StartCallRequest, 4), answered: make(chan phone.ControlRequest, 4),
 		hungup: make(chan string, 4), stream: make(chan phone.Event, 16),
 	}
+	go func() {
+		for event := range p.stream {
+			var subscribers []chan phone.Event
+			for len(subscribers) == 0 { // hold events until a line subscribes
+				p.mu.Lock()
+				subscribers = append(subscribers, p.subscribers...)
+				p.mu.Unlock()
+				if len(subscribers) == 0 {
+					time.Sleep(5 * time.Millisecond)
+				}
+			}
+			for _, subscriber := range subscribers {
+				subscriber <- event
+			}
+		}
+	}()
+	return p
 }
 
 func (p *fakePhone) CreateMedia(owner, advertiseIP string, onDTMF func(string)) (MediaLeg, error) {
@@ -78,7 +97,11 @@ func (p *fakePhone) Hangup(_ context.Context, _, callID, _ string) error {
 }
 func (p *fakePhone) DTMF(string, string, string, string) error { return nil }
 func (p *fakePhone) Subscribe(uint64) ([]phone.Event, <-chan phone.Event, func()) {
-	return nil, p.stream, func() {}
+	subscriber := make(chan phone.Event, 16)
+	p.mu.Lock()
+	p.subscribers = append(p.subscribers, subscriber)
+	p.mu.Unlock()
+	return nil, subscriber, func() {}
 }
 
 type fakeDevices struct{}
@@ -523,5 +546,95 @@ func TestModemHangupReachesPBXBehindExternalContact(t *testing.T) {
 	case <-pbx.byes:
 	case <-time.After(3 * time.Second):
 		t.Fatal("modem hangup BYE went to the advertised Contact instead of the PBX")
+	}
+}
+
+func TestCheckLinesNeedsDistinctCardsAndPorts(t *testing.T) {
+	line := func(device string, port int) Settings { return Settings{DeviceID: device, LocalPort: port} }
+	if err := CheckLines([]Settings{line("", 5070)}); err != nil {
+		t.Fatalf("single unbound line rejected: %v", err)
+	}
+	if err := CheckLines([]Settings{line("a", 5070), line("b", 5071)}); err != nil {
+		t.Fatalf("distinct lines rejected: %v", err)
+	}
+	for name, lines := range map[string][]Settings{
+		"unbound":   {line("a", 5070), line("", 5071)},
+		"same card": {line("a", 5070), line("a", 5071)},
+		"same port": {line("a", 5070), line("b", 5070)},
+	} {
+		if err := CheckLines(lines); err == nil {
+			t.Errorf("%s: CheckLines accepted %+v", name, lines)
+		}
+	}
+}
+
+// Two lines on one HiDeck: a call on each card must ring the PBX only from
+// the line bound to that card.
+func TestEachLineRingsOnlyForItsOwnCard(t *testing.T) {
+	pbx := startFakePBX(t)
+	fake := newFakePhone()
+	start := func(device string) int {
+		localPort := freeTCPPort(t)
+		settings, _ := SettingsFromConfigForTest(pbx.port, localPort)
+		settings.DeviceID = device
+		client, err := New(settings, fake, fakeDevices{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		client.Start()
+		t.Cleanup(client.Stop)
+		select {
+		case <-pbx.registers:
+		case <-time.After(5 * time.Second):
+			t.Fatal("line did not register")
+		}
+		waitFor(t, client.isRegistered)
+		return localPort
+	}
+	portA, portB := start("dev-a"), start("dev-b")
+	if settingsA, settingsB := (Settings{Username: "9001", DeviceID: "dev-a"}), (Settings{Username: "9001", DeviceID: "dev-b"}); settingsA.owner() == settingsB.owner() {
+		t.Fatal("lines sharing a username share an owner")
+	}
+
+	for _, tc := range []struct {
+		device string
+		port   int
+	}{{"dev-b", portB}, {"dev-a", portA}} {
+		fake.stream <- phone.Event{Type: "incoming_call", Call: phone.CallView{
+			CallID: "in-" + tc.device, DeviceID: tc.device, Direction: "inbound", Peer: "+12135550199", Status: phone.StatusRinging,
+		}}
+		select {
+		case invite := <-pbx.invites:
+			if got := invite.Contact().Address.Port; got != tc.port {
+				t.Fatalf("%s call rang the PBX from port %d, want %d", tc.device, got, tc.port)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s call did not ring the PBX", tc.device)
+		}
+		select {
+		case invite := <-pbx.invites:
+			t.Fatalf("%s call rang the PBX twice (from port %d)", tc.device, invite.Contact().Address.Port)
+		case <-time.After(300 * time.Millisecond):
+		}
+	}
+	for range 2 {
+		select {
+		case <-fake.answered:
+		case <-time.After(5 * time.Second):
+			t.Fatal("PBX answer did not reach the modem call")
+		}
+	}
+	fake.mu.Lock()
+	media := append([]*fakeMedia(nil), fake.media...)
+	fake.mu.Unlock()
+	for _, leg := range media {
+		fake.stream <- phone.Event{Type: "call_ended", Call: phone.CallView{MediaID: leg.id}}
+	}
+	for range media {
+		select {
+		case <-pbx.byes:
+		case <-time.After(5 * time.Second):
+			t.Fatal("ending the modem calls did not BYE the PBX")
+		}
 	}
 }

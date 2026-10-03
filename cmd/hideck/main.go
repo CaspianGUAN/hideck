@@ -241,7 +241,7 @@ func main() {
 	apiServer.SetVoiceRecordingDirectory(voiceRecordingDirectory)
 	apiServer.SetPhoneService(phoneService)
 	apiServer.SetRealtimeTraffic(realtimeTraffic)
-	sipClient := startSIPClient(cfg.SIP, phoneService, pool)
+	sipClients := startSIPClients(cfg, phoneService, pool)
 
 	syncProxyConfigs := func(reason, deviceID string) {
 		if err := apiServer.SyncProxyConfigs(); err != nil {
@@ -289,7 +289,7 @@ func main() {
 
 	done := make(chan struct{})
 	go func() {
-		if sipClient != nil {
+		for _, sipClient := range sipClients {
 			sipClient.Stop()
 		}
 		if err := apiServer.Shutdown(shutdownCtx); err != nil {
@@ -330,23 +330,37 @@ func main() {
 	logger.Info("再见!")
 }
 
-// startSIPClient registers HiDeck as a PBX extension when sip_client is enabled.
-func startSIPClient(cfg config.SIPClientConfig, phoneService *phone.Service, pool *device.Pool) *sipclient.Client {
-	if !cfg.Enabled {
+// startSIPClients starts one SIP line per enabled sip_client / sip_clients
+// entry; several lines must each be bound to their own card and port.
+func startSIPClients(cfg *config.Config, phoneService *phone.Service, pool *device.Pool) []*sipclient.Client {
+	entries := append([]config.SIPClientConfig{cfg.SIP}, cfg.SIPClients...)
+	lines := make([]sipclient.Settings, 0, len(entries))
+	for index, entry := range entries {
+		if !entry.Enabled {
+			continue
+		}
+		settings, err := sipclient.SettingsFromConfig(entry)
+		if err != nil {
+			logger.Error("SIP 客户端配置无效", "entry", index, "err", err)
+			return nil
+		}
+		lines = append(lines, settings)
+	}
+	if err := sipclient.CheckLines(lines); err != nil {
+		logger.Error("SIP 线路配置冲突，未启动 SIP 客户端", "err", err)
 		return nil
 	}
-	settings, err := sipclient.SettingsFromConfig(cfg)
-	if err != nil {
-		logger.Error("SIP 客户端配置无效", "err", err)
-		return nil
+	clients := make([]*sipclient.Client, 0, len(lines))
+	for _, settings := range lines {
+		client, err := sipclient.New(settings, sipclient.PhoneService{Service: phoneService}, poolDevices{pool})
+		if err != nil {
+			logger.Error("SIP 客户端初始化失败", "device_id", settings.DeviceID, "err", err)
+			continue
+		}
+		client.Start()
+		clients = append(clients, client)
 	}
-	client, err := sipclient.New(settings, sipclient.PhoneService{Service: phoneService}, poolDevices{pool})
-	if err != nil {
-		logger.Error("SIP 客户端初始化失败", "err", err)
-		return nil
-	}
-	client.Start()
-	return client
+	return clients
 }
 
 type poolDevices struct{ pool *device.Pool }

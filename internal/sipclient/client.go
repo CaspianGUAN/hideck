@@ -104,6 +104,39 @@ func SettingsFromConfig(cfg config.SIPClientConfig) (Settings, error) {
 	return settings, nil
 }
 
+// owner identifies this line to the phone service; lines bound to different
+// cards stay distinct even when they share a username.
+func (s Settings) owner() string {
+	if s.DeviceID == "" {
+		return "sip:" + s.Username
+	}
+	return "sip:" + s.Username + "@" + s.DeviceID
+}
+
+// CheckLines rejects line sets that would fight over a card or a port: with
+// more than one line, each must be bound to its own card and listen on its
+// own local port.
+func CheckLines(lines []Settings) error {
+	if len(lines) < 2 {
+		return nil
+	}
+	devices := make(map[string]bool, len(lines))
+	ports := make(map[int]bool, len(lines))
+	for index, line := range lines {
+		if line.DeviceID == "" {
+			return fmt.Errorf("sipclient: line %d needs device_id when several SIP lines are configured", index+1)
+		}
+		if devices[line.DeviceID] {
+			return fmt.Errorf("sipclient: device_id %q is bound to more than one SIP line", line.DeviceID)
+		}
+		if ports[line.LocalPort] {
+			return fmt.Errorf("sipclient: local_port %d is used by more than one SIP line", line.LocalPort)
+		}
+		devices[line.DeviceID], ports[line.LocalPort] = true, true
+	}
+	return nil
+}
+
 func splitServer(value string) (string, int, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -180,7 +213,7 @@ func New(settings Settings, phoneService Phone, devices Devices) (*Client, error
 	contact := sip.ContactHeader{Address: contactURI}
 	c := &Client{
 		settings: settings, phone: phoneService, devices: devices,
-		owner: "sip:" + settings.Username, localIP: localIP, pbxIPs: pbxIPs,
+		owner: settings.owner(), localIP: localIP, pbxIPs: pbxIPs,
 		ua: ua, client: client, server: server, contact: contact,
 		dialogs: sipgo.NewDialogClientCache(client, contact),
 		serving: sipgo.NewDialogServerCache(client, contact),
@@ -213,7 +246,8 @@ func (c *Client) Start() {
 		c.followPhoneEvents()
 	}()
 	logger.Info("SIP 客户端已启动", "mode", c.settings.Mode, "server", c.serverAddr(), "transport", c.settings.Transport,
-		"username", c.settings.Username, "local_ip", c.localIP, "local_port", c.settings.LocalPort)
+		"username", c.settings.Username, "local_ip", c.localIP, "local_port", c.settings.LocalPort,
+		"device_id", c.settings.DeviceID)
 }
 
 // Stop unregisters and closes the user agent.
