@@ -69,6 +69,7 @@ func copyCarrierIKEFromInternal(result *EffectiveCarrierConfig, value policy.Eff
 	result.AlgorithmPolicy = value.AlgorithmPolicy
 	result.DeviceIdentityIMEI = value.DeviceIdentityIMEI
 	result.DeviceIdentityEnabled = value.DeviceIdentityEnabled
+	result.IKEAuthMinimal = value.IKEAuthMinimal
 	result.DeviceModel = value.DeviceModel
 	result.DPDKeepaliveIntervalSeconds = value.DPDKeepaliveIntervalSeconds
 	result.ReauthIntervalSeconds = value.ReauthIntervalSeconds

@@ -131,6 +131,7 @@ type EffectiveCarrierConfig struct {
 	AlgorithmPolicy               string
 	DeviceIdentityIMEI            string
 	DeviceIdentityEnabled         bool
+	IKEAuthMinimal                bool
 	DeviceModel                   string
 	IMSDomain                     string
 	IMSRealm                      string
