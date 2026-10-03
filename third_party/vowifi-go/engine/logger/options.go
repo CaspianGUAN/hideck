@@ -42,3 +42,14 @@ func TimeEncoderOfLayout(layout string) zapcore.TimeEncoder {
 
 // WithCaller returns the corresponding zap option.
 func WithCaller(enabled bool) zap.Option { return zap.WithCaller(enabled) }
+
+// Use routes engine logs through a host-provided logger, so embedding
+// processes keep them in their own log instead of bare stderr.
+func Use(base *zap.Logger) {
+	if base == nil {
+		return
+	}
+	initOnce.Do(func() {})
+	global.Store(base)
+	globalSugar.Store(base.Sugar())
+}

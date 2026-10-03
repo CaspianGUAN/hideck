@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/iniwex5/quectel-qmi-go/pkg/qmi"
+	enginelogger "github.com/iniwex5/vowifi-go/engine/logger"
 	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
 	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
 	"github.com/yibaiba/hideck/internal/api"
@@ -32,6 +33,7 @@ import (
 
 	"github.com/yibaiba/hideck/internal/web"
 	"github.com/yibaiba/hideck/pkg/logger"
+	"go.uber.org/zap"
 )
 
 func main() {
@@ -56,6 +58,8 @@ func main() {
 	})
 	// 将内置 slog 重定向到已就绪的系统日志框架
 	slog.SetDefault(slog.New(logger.NewSlogHandler(logger.ZapLogger())))
+	// SWu/IKE 引擎日志（隧道重协商、掉线原因）默认只写 stderr，接入 app.log。
+	enginelogger.Use(logger.ZapLogger().WithOptions(zap.AddCallerSkip(-1)))
 	logger.Info("HiDeck 模组管理器启动中...")
 
 	go func() {
