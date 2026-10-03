@@ -212,3 +212,25 @@ func TestPrepareSendEnvironmentReturnsTypedNotReadyError(t *testing.T) {
 		t.Fatalf("prepareSendEnv() error = %v, want ErrSMSNotReady", err)
 	}
 }
+
+func TestProtectedSMSReadinessTrustsRegisteredOutboundFlow(t *testing.T) {
+	service := newProtectedKeepaliveTestService(t)
+	registration, registrationPeer := net.Pipe()
+	t.Cleanup(func() { _ = registrationPeer.Close() })
+	service.mu.Lock()
+	service.registrationTCP = registration
+	service.registrationTCPProtected = true
+	service.sipOutbound = true
+	service.outboundContactRegistered = true
+	service.mu.Unlock()
+
+	if got := service.SMSReadiness(); !got.ReceiverReady || !got.Ready {
+		t.Fatalf("readiness over a registered outbound flow = %+v", got)
+	}
+	service.mu.Lock()
+	service.outboundContactRegistered = false
+	service.mu.Unlock()
+	if got := service.SMSReadiness(); got.ReceiverReady {
+		t.Fatalf("readiness without a registered outbound flow = %+v", got)
+	}
+}

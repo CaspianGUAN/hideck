@@ -58,6 +58,7 @@ func smsReceiverHealthReady(input smsHealthInput) bool {
 
 func (s *Service) protectedSMSPushRequiredLocked() bool {
 	return !s.externalTransport && !s.canAwaitOnDemandPortS() && !s.portSTimeoutDownlinkProven() &&
+		!s.outboundFlowCarriesDownlinkLocked() &&
 		s.regSession != nil &&
 		s.regSession.security != nil &&
 		strings.TrimSpace(s.regSession.security.verifyHeader) != ""
@@ -150,4 +151,13 @@ func evaluateSMSReadiness(registered, profileReady, transportReady, receiverRead
 		readiness.Reason = smsReadyReasonReady
 	}
 	return readiness
+}
+
+// outboundFlowCarriesDownlinkLocked reports a registered RFC 5626 outbound
+// flow on the protected REGISTER connection. The P-CSCF then sends MT
+// requests over that flow and never opens port-s (T-Mobile US), so waiting
+// for a port-s push would keep SMS "not ready" while delivery works.
+func (s *Service) outboundFlowCarriesDownlinkLocked() bool {
+	return s.outboundContactRegistered && s.sipOutbound &&
+		s.registrationTCP != nil && s.registrationTCPProtected
 }
