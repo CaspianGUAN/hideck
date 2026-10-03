@@ -621,3 +621,57 @@ func respondToOldIKESADelete(t *testing.T, session *Session, transport *testIKET
 	encoded, _ := session.encryptAndWrap(deleteResponse)
 	transport.ike <- encoded
 }
+
+func TestChildSARekeyRetriesWithPFSAfterNoProposalChosen(t *testing.T) {
+	session, transport := newEstablishedControlSession(t)
+	defer stopControlTestSession(session)
+	if session.dhGroup == 0 || session.childDH != nil {
+		t.Fatalf("precondition: IKE group %d, child DH %v", session.dhGroup, session.childDH)
+	}
+	go func() {
+		// The ePDG refuses a CHILD_SA rekey without KE.
+		select {
+		case raw := <-transport.sentIKE:
+			request, err := ikev2.DecodePacket(raw)
+			if err != nil {
+				t.Errorf("decode first rekey request: %v", err)
+				return
+			}
+			payloads, err := session.decryptAndParse(request)
+			if err != nil {
+				t.Errorf("decrypt first rekey request: %v", err)
+				return
+			}
+			for _, payload := range payloads {
+				if payload != nil && payload.Type() == ikev2.PayloadKE {
+					t.Error("first rekey attempt already carried KE")
+				}
+			}
+			response := &ikev2.IKEPacket{
+				InitiatorSPI: request.InitiatorSPI, ResponderSPI: request.ResponderSPI,
+				Version: 0x20, ExchangeType: request.ExchangeType,
+				Flags: ikeResponseFlag, MessageID: request.MessageID,
+				Payloads: []ikev2.Payload{&ikev2.EncryptedPayloadNotify{NotifyType: ikev2.NO_PROPOSAL_CHOSEN}},
+			}
+			encoded, err := session.encryptAndWrap(response)
+			if err != nil {
+				t.Errorf("encrypt rejection: %v", err)
+				return
+			}
+			transport.ike <- encoded
+		case <-time.After(time.Second):
+			t.Error("timed out waiting for first rekey request")
+			return
+		}
+		respondToChildSARekey(t, session, transport, 0xa1b2c3d4, bytes.Repeat([]byte{0x92}, 32))
+	}()
+	if err := session.RekeyChildSA(); err != nil {
+		t.Fatalf("RekeyChildSA: %v", err)
+	}
+	if got := childDHGroup(session.childDH); got != session.dhGroup {
+		t.Fatalf("child DH group after retry = %d, want IKE group %d", got, session.dhGroup)
+	}
+	if session.espRemoteSPI != 0xa1b2c3d4 {
+		t.Fatalf("remote SPI = %08x", session.espRemoteSPI)
+	}
+}

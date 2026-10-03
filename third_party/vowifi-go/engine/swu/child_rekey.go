@@ -35,12 +35,31 @@ func (s *Session) performChildSARekey(ctx context.Context) error {
 	if s.transport() == nil || s.ikeKeys == nil || s.State() != stateEstablished {
 		return errors.New("swu: session not established")
 	}
+	group := s.currentChildDHGroup()
+	err := s.exchangeChildSARekey(ctx, group)
+	if group == 0 && s.dhGroup != 0 && isNoProposalChosenError(err) {
+		// The IKE_AUTH CHILD_SA carries no KE, but ePDGs commonly require PFS
+		// on CREATE_CHILD_SA rekeys. Retry with the IKE
+		// SA's group; a successful rekey keeps it for later rekeys.
+		logger.Info("CHILD_SA rekey without PFS rejected; retrying with PFS",
+			zap.Uint16("dh_group", s.dhGroup))
+		err = s.exchangeChildSARekey(ctx, s.dhGroup)
+	}
+	return err
+}
+
+func isNoProposalChosenError(err error) bool {
+	var rejection *createChildSARejectError
+	return errors.As(err, &rejection) && rejection.NotifyType == ikev2.NO_PROPOSAL_CHOSEN
+}
+
+func (s *Session) exchangeChildSARekey(ctx context.Context, group uint16) error {
 	ni, localSPI, err := s.newChildSAInitiatorMaterial()
 	if err != nil {
 		return err
 	}
 	tsi, tsr := s.currentChildSelectors()
-	newDH, err := s.newChildSARekeyDH()
+	newDH, err := newChildSARekeyDHForGroup(group)
 	if err != nil {
 		return err
 	}
@@ -160,7 +179,10 @@ func (s *Session) newChildSAInitiatorMaterial() ([]byte, uint32, error) {
 }
 
 func (s *Session) newChildSARekeyDH() (*enginecrypto.DiffieHellman, error) {
-	group := s.currentChildDHGroup()
+	return newChildSARekeyDHForGroup(s.currentChildDHGroup())
+}
+
+func newChildSARekeyDHForGroup(group uint16) (*enginecrypto.DiffieHellman, error) {
 	if group == 0 {
 		return nil, nil
 	}
