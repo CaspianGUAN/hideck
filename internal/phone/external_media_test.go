@@ -185,3 +185,42 @@ func TestExternalMediaReportsEachRFC4733DigitOnce(t *testing.T) {
 	defer mu.Unlock()
 	t.Fatalf("digits = %q, want %q", strings.Join(digits, ""), "5#")
 }
+
+// An IVR handing the call to another media server restarts SSRC and sequence
+// numbers mid-call (seen on T-Mobile 611); audio must keep flowing.
+func TestIMSStreamSwitchKeepsAudioFlowing(t *testing.T) {
+	media := newTestExternalMedia(t, nil)
+	pbx, ims := listenTestRTP(t), listenTestRTP(t)
+	if _, err := media.AnswerOffer(g711OfferSDP(pbx.LocalAddr().(*net.UDPAddr).Port, "0 96")); err != nil {
+		t.Fatal(err)
+	}
+	imsSDP := fmt.Sprintf("v=0\r\nc=IN IP4 127.0.0.1\r\nm=audio %d RTP/AVP 0\r\na=rtpmap:0 PCMU/8000\r\n",
+		ims.LocalAddr().(*net.UDPAddr).Port)
+	if err := media.session.Attach(imsSDP); err != nil {
+		t.Fatal(err)
+	}
+	imsAddr := media.session.rtpConn.LocalAddr().(*net.UDPAddr)
+	send := func(ssrc uint32, sequence uint16, fill byte) {
+		sendTestRTP(t, ims, imsAddr, &rtp.Packet{
+			Header:  rtp.Header{Version: 2, PayloadType: 0, SequenceNumber: sequence, Timestamp: uint32(sequence) * 160, SSRC: ssrc},
+			Payload: bytes.Repeat([]byte{fill}, browserSamplesPerFrame),
+		})
+	}
+	for index := uint16(0); index < 3; index++ {
+		send(0x1111, 100+index, 0x2a)
+	}
+	if got := readTestRTP(t, pbx, 0); got.Payload[0] != 0x2a {
+		t.Fatalf("first stream payload = %x", got.Payload[0])
+	}
+	for index := uint16(0); index < 10; index++ {
+		send(0x2222, 40000+index, 0x3b)
+		time.Sleep(jitterTick)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if got := readTestRTP(t, pbx, 0); got.Payload[0] == 0x3b {
+			return
+		}
+	}
+	t.Fatal("audio from the second media stream never reached the PBX leg")
+}

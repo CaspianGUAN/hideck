@@ -58,12 +58,24 @@ func (s *MediaSession) forwardIMSRTP() {
 	defer ticker.Stop()
 	buffer := make(map[uint16]*rtp.Packet, mediaPacketBuffer)
 	var expected uint16
+	var ssrc uint32
 	started := false
 	for {
 		select {
 		case packet := <-packets:
-			if !started {
-				expected, started = packet.SequenceNumber, true
+			offset := int16(packet.SequenceNumber - expected)
+			// IVRs and announcement servers hand the call between media
+			// servers mid-stream, which restarts SSRC and sequence numbers.
+			// Waiting for the old sequence would mute the rest of the call.
+			if !started || packet.SSRC != ssrc || offset >= 2*mediaPacketBuffer || offset < -2*mediaPacketBuffer {
+				clear(buffer)
+				expected, ssrc, started = packet.SequenceNumber, packet.SSRC, true
+				offset = 0
+			}
+			if offset < 0 {
+				// Arrived after its playout slot; it can no longer be played.
+				s.lost.Add(1)
+				continue
 			}
 			if len(buffer) >= mediaPacketBuffer {
 				s.lost.Add(1)
