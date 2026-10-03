@@ -220,7 +220,7 @@ func main() {
 		Notifier: callResultNotifier, RecordingDir: voiceRecordingDirectory,
 		WebRTCUDPAddress: cfg.Server.WebRTCUDPAddress, WebRTCPublicHost: cfg.Server.WebRTCPublicHost,
 		ICEServers:     cfg.Server.ICEServers,
-		RealtimeCodecs: availableRealtimeCodecs(audioTranscoder),
+		RealtimeCodecs: availableRealtimeCodecs(audioTranscoder, cfg.Server.EnableEVS),
 		NewRealtimeCodec: func(codec, fmtp string) (phone.RealtimeCodec, error) {
 			return audioTranscoder.NewRealtimeCodec(codec, fmtp)
 		},
@@ -360,9 +360,13 @@ func (d poolDevices) PrepareCall(ctx context.Context, deviceID string) error {
 	return d.pool.PrepareCellularCall(ctx, deviceID)
 }
 
-func availableRealtimeCodecs(transcoder *audiotranscode.Transcoder) []string {
-	available := make([]string, 0, 2)
-	for _, codec := range []string{"AMR-WB", "AMR", "EVS"} {
+func availableRealtimeCodecs(transcoder *audiotranscode.Transcoder, enableEVS bool) []string {
+	codecs := []string{"AMR-WB", "AMR"}
+	if enableEVS {
+		codecs = append(codecs, "EVS")
+	}
+	available := make([]string, 0, len(codecs))
+	for _, codec := range codecs {
 		if err := transcoder.ValidateRealtimeCodec(codec); err != nil {
 			logger.Warn("实时语音编解码器不可用", "codec", codec, "err", err)
 			continue

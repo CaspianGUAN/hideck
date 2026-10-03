@@ -94,3 +94,17 @@ func TestPlainAudioSDPAdvertisesOnlySupportedIMSCodecsAndDTMF(t *testing.T) {
 		t.Fatalf("selected answer SDP = %s", answer)
 	}
 }
+
+// With EVS disabled, an IMS offer that prefers EVS must fall back to AMR-WB
+// rather than negotiating EVS, whose uplink we can only send in AMR-WB IO mode.
+func TestParseRTPEndpointSkipsDisabledEVSForAMRWB(t *testing.T) {
+	offer := "v=0\r\nc=IN IP4 127.0.0.1\r\nm=audio 40000 RTP/AVP 115 116 0\r\n" +
+		"a=rtpmap:115 EVS/16000\r\na=rtpmap:116 AMR-WB/16000\r\na=fmtp:116 octet-align=1\r\na=rtpmap:0 PCMU/8000\r\n"
+	endpoint, err := parseRTPEndpoint(offer, "PCMU", "PCMA", "AMR-WB", "AMR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if endpoint.Codec != "AMR-WB" || endpoint.PayloadType != 116 || endpoint.Fmtp != "octet-align=1" {
+		t.Fatalf("endpoint = %+v, want AMR-WB PT 116", endpoint)
+	}
+}

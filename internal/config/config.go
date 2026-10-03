@@ -179,11 +179,15 @@ type WebConfig struct {
 }
 
 type ServerConfig struct {
-	Port                 string   `mapstructure:"port"`
-	HTTPSEnabled         bool     `mapstructure:"https_enabled"`
-	HTTPSPort            string   `mapstructure:"https_port"`
-	WebRTCUDPAddress     string   `mapstructure:"webrtc_udp_address"`
-	WebRTCPublicHost     string   `mapstructure:"webrtc_public_host"`
+	Port             string `mapstructure:"port"`
+	HTTPSEnabled     bool   `mapstructure:"https_enabled"`
+	HTTPSPort        string `mapstructure:"https_port"`
+	WebRTCUDPAddress string `mapstructure:"webrtc_udp_address"`
+	WebRTCPublicHost string `mapstructure:"webrtc_public_host"`
+	// EnableEVS offers EVS on calls. Only EVS decoding is native; uplink is
+	// sent in EVS AMR-WB IO mode, which some networks and handsets do not
+	// play, leaving the far end silent. Off by default so AMR-WB is used.
+	EnableEVS            bool     `mapstructure:"enable_evs"`
 	TLSCertFile          string   `mapstructure:"tls_cert_file"`
 	TLSKeyFile           string   `mapstructure:"tls_key_file"`
 	TLSDataDir           string   `mapstructure:"tls_data_dir"`
