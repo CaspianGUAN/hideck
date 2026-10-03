@@ -96,3 +96,37 @@ func TestProcessSMSSameHistoricalIMSIKeepsDeviceICCID(t *testing.T) {
 		t.Fatalf("saved identities=%+v", store.saved)
 	}
 }
+
+// Every modem plugged into the same slot shares the interface-name device ID
+// as alias; the binding of the modem attached now must win over an older
+// modem's binding found through the alias.
+func TestResolveSMSIdentityPrefersAttachedModemBinding(t *testing.T) {
+	pool, store := smsTestPool("dev-1", SMSIdentity{ICCID: "old-modem-card", IMSI: "old-imsi"})
+	store.identities["imei-current"] = SMSIdentity{ICCID: "current-card", IMSI: "current-imsi"}
+	worker := &Worker{ID: "dev-1", Pool: pool}
+	setWorkerSMSIdentity(worker, SMSIdentity{ICCID: "current-card", IMSI: "current-imsi"})
+	worker.state.Identity.IMEI = "imei-current"
+	pool.workers[worker.ID] = worker
+
+	identity, err := pool.ResolveSMSIdentity(worker.ID)
+
+	if err != nil {
+		t.Fatalf("ResolveSMSIdentity() error=%v, want the attached modem's binding", err)
+	}
+	if identity.ICCID != "CURRENT-CARD" {
+		t.Fatalf("identity=%+v", identity)
+	}
+}
+
+func TestResolveSMSIdentityStillRejectsSIMSwapOnAttachedModem(t *testing.T) {
+	pool, store := smsTestPool("dev-1", SMSIdentity{ICCID: "unused"})
+	store.identities["imei-current"] = SMSIdentity{ICCID: "previous-card", IMSI: "previous-imsi"}
+	worker := &Worker{ID: "dev-1", Pool: pool}
+	setWorkerSMSIdentity(worker, SMSIdentity{ICCID: "swapped-card", IMSI: "swapped-imsi"})
+	worker.state.Identity.IMEI = "imei-current"
+	pool.workers[worker.ID] = worker
+
+	if _, err := pool.ResolveSMSIdentity(worker.ID); !errors.Is(err, ErrSMSIdentityConflict) {
+		t.Fatalf("ResolveSMSIdentity() error=%v, want conflict for a real SIM swap", err)
+	}
+}

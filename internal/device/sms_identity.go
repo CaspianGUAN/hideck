@@ -69,7 +69,7 @@ func (p *Pool) resolveSMSIdentity(deviceID string, requireIMSI bool) (SMSIdentit
 	if err != nil {
 		return SMSIdentity{}, err
 	}
-	storedIdentity, storedPresent, err := p.smsIdentityRepository().LookupDeviceIdentity(deviceID)
+	storedIdentity, storedPresent, err := p.lookupStoredSMSIdentity(deviceID)
 	if err != nil {
 		return SMSIdentity{}, fmt.Errorf("读取设备短信身份失败: %w", err)
 	}
@@ -84,6 +84,31 @@ func (p *Pool) resolveSMSIdentity(deviceID string, requireIMSI bool) (SMSIdentit
 		return SMSIdentity{}, ErrSMSIdentityUnknown
 	}
 	return identity, nil
+}
+
+// lookupStoredSMSIdentity prefers the stored binding of the modem that is
+// attached now. A device ID is an interface name, so every modem that was
+// ever plugged into the same slot shares it as alias; matching on the alias
+// alone can return another modem's old SIM and report a false conflict.
+func (p *Pool) lookupStoredSMSIdentity(deviceID string) (SMSIdentity, bool, error) {
+	store := p.smsIdentityRepository()
+	if imei := p.runtimeIMEI(deviceID); imei != "" {
+		identity, found, err := store.LookupDeviceIdentity(imei)
+		if err != nil || found {
+			return identity, found, err
+		}
+	}
+	return store.LookupDeviceIdentity(deviceID)
+}
+
+func (p *Pool) runtimeIMEI(deviceID string) string {
+	worker := p.GetWorker(deviceID)
+	if worker == nil {
+		return ""
+	}
+	worker.cacheMu.RLock()
+	defer worker.cacheMu.RUnlock()
+	return strings.TrimSpace(worker.state.Identity.IMEI)
 }
 
 func (p *Pool) runtimeSMSIdentity(deviceID string) (SMSIdentity, bool, error) {
