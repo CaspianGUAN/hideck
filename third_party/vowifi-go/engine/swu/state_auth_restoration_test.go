@@ -94,8 +94,10 @@ func TestInitialIKEAuthRestoresNotifyOrderAndDeviceIdentity(t *testing.T) {
 			t.Errorf("notification[%d] = %d, want %d", index, notifications[index].NotifyType, want)
 		}
 	}
-	if !bytes.Equal(notifications[4].NotifyData, notifications[5].NotifyData) || len(notifications[4].NotifyData) != 10 {
-		t.Fatalf("device identity notify data = %x / %x", notifications[4].NotifyData, notifications[5].NotifyData)
+	// TS 24.302 8.2.9.2: 2-octet length (type + value), type 1 = IMEI, BCD.
+	want := []byte{0x00, 0x09, 0x01, 0x53, 0x98, 0x38, 0x63, 0x41, 0x33, 0x67, 0xf1}
+	if !bytes.Equal(notifications[4].NotifyData, want) || !bytes.Equal(notifications[5].NotifyData, want) {
+		t.Fatalf("device identity notify data = %x / %x, want %x", notifications[4].NotifyData, notifications[5].NotifyData, want)
 	}
 }
 

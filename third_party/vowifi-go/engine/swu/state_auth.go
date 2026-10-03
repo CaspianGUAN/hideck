@@ -445,7 +445,10 @@ func (s *Session) deviceIdentityPayloads() ([]ikev2.Payload, error) {
 	if err != nil {
 		return nil, err
 	}
-	data := append([]byte{1, byte(len(encoded))}, encoded...)
+	// TS 24.302 8.2.9.2: Length (2 octets, covering type and value),
+	// Identity Type (1 = IMEI), Identity Value (BCD). The old type/length
+	// byte order made ePDGs that check the device (AIS 520/03) misread it.
+	data := deviceIdentityNotifyData(deviceIdentityTypeIMEI, encoded)
 	return []ikev2.Payload{
 		&ikev2.EncryptedPayloadNotify{
 			ProtocolID: ikev2.ProtoIKE, NotifyType: ikev2.DEVICE_IDENTITY_3GPP, NotifyData: data,
@@ -454,6 +457,15 @@ func (s *Session) deviceIdentityPayloads() ([]ikev2.Payload, error) {
 			ProtocolID: ikev2.ProtoIKE, NotifyType: ikev2.DEVICE_IDENTITY, NotifyData: append([]byte(nil), data...),
 		},
 	}, nil
+}
+
+const deviceIdentityTypeIMEI byte = 1
+
+func deviceIdentityNotifyData(identityType byte, value []byte) []byte {
+	data := make([]byte, 3, 3+len(value))
+	binary.BigEndian.PutUint16(data[:2], uint16(1+len(value)))
+	data[2] = identityType
+	return append(data, value...)
 }
 
 func encodeIMEITBCD(imei string) ([]byte, error) {
