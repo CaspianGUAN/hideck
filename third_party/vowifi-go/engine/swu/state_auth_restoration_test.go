@@ -248,3 +248,16 @@ func TestMinimalIKEAuthAnswersRequestedDeviceIdentity(t *testing.T) {
 		t.Fatal("DEVICE_IDENTITY sent twice for one request")
 	}
 }
+
+func TestIKEIdentityModeSelectsAKAPrimeNAI(t *testing.T) {
+	for mode, want := range map[string]string{
+		"":          "0520030393351967@nai.epc.mnc003.mcc520.3gppnetwork.org",
+		"epc_nai":   "0520030393351967@nai.epc.mnc003.mcc520.3gppnetwork.org",
+		"aka_prime": "6520030393351967@nai.epc.mnc003.mcc520.3gppnetwork.org",
+	} {
+		got := buildNAI("520030393351967", &Config{MCC: "520", MNC: "03", IKEIdentityMode: mode})
+		if got != want {
+			t.Errorf("mode %q NAI = %q, want %q", mode, got, want)
+		}
+	}
+}
