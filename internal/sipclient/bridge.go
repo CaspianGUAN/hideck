@@ -3,7 +3,9 @@ package sipclient
 import (
 	"context"
 	"errors"
+	"net"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -173,6 +175,7 @@ func (c *Client) onInvite(request *sip.Request, tx sip.ServerTransaction) {
 			return
 		}
 	}
+	pinContactToSource(request.Contact(), request.Source())
 	dialog, err := c.serving.ReadInvite(request, tx)
 	if err != nil {
 		_ = tx.Respond(sip.NewResponseFromRequest(request, sip.StatusBadRequest, "Bad Request", nil))
@@ -441,6 +444,7 @@ func (c *Client) awaitPBXAnswer(b *bridge, result <-chan answerResult, stopRingi
 func (c *Client) bridgeAnsweredInbound(b *bridge, dialog *sipgo.DialogClientSession) {
 	ctx, cancel := context.WithTimeout(c.ctx, controlTimeout)
 	defer cancel()
+	pinContactToSource(dialog.InviteResponse.Contact(), dialog.InviteResponse.Source())
 	ackErr := dialog.Ack(ctx)
 	answerErr := b.media.ApplyAnswer(string(dialog.InviteResponse.Body()))
 	if ackErr == nil && answerErr == nil {
@@ -606,4 +610,25 @@ func sdpConnectionHost(sdp string) string {
 		}
 	}
 	return ""
+}
+
+// pinContactToSource points in-dialog requests (ACK, BYE) at the address the
+// PBX actually sent from. FreePBX advertises its external address in Contact
+// when the peer is outside local_net (127.0.0.1 on the same host), so ACK and
+// BYE sent there are lost: the PBX keeps resending 200 OK until Timer H and
+// only then hangs up, and our BYE never gets an answer.
+func pinContactToSource(contact *sip.ContactHeader, source string) {
+	if contact == nil {
+		return
+	}
+	host, rawPort, err := net.SplitHostPort(source)
+	if err != nil {
+		return
+	}
+	port, err := strconv.Atoi(rawPort)
+	if err != nil || port <= 0 {
+		return
+	}
+	contact.Address.Host = strings.Trim(host, "[]")
+	contact.Address.Port = port
 }

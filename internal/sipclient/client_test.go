@@ -95,9 +95,17 @@ type fakePBX struct {
 	registers chan *sip.Request
 	invites   chan *sip.Request
 	byes      chan *sip.Request
+	answered  chan *sipgo.DialogServerSession
 }
 
 func startFakePBX(t *testing.T) *fakePBX {
+	t.Helper()
+	return startFakePBXAdvertising(t, "127.0.0.1")
+}
+
+// startFakePBXAdvertising puts contactHost in the PBX's Contact, like FreePBX
+// advertising its external address to a peer outside local_net.
+func startFakePBXAdvertising(t *testing.T, contactHost string) *fakePBX {
 	t.Helper()
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
@@ -116,13 +124,14 @@ func startFakePBX(t *testing.T) *fakePBX {
 	if err != nil {
 		t.Fatal(err)
 	}
-	contactURI := sip.Uri{Scheme: "sip", User: "pbx", Host: "127.0.0.1", Port: port, UriParams: sip.NewParams()}
+	contactURI := sip.Uri{Scheme: "sip", User: "pbx", Host: contactHost, Port: port, UriParams: sip.NewParams()}
 	contactURI.UriParams.Add("transport", "tcp")
 	contact := sip.ContactHeader{Address: contactURI}
 	pbx := &fakePBX{
 		port: port, client: client,
 		dialogs: sipgo.NewDialogClientCache(client, contact), serving: sipgo.NewDialogServerCache(client, contact),
 		registers: make(chan *sip.Request, 8), invites: make(chan *sip.Request, 4), byes: make(chan *sip.Request, 4),
+		answered: make(chan *sipgo.DialogServerSession, 4),
 	}
 	server.OnRegister(func(request *sip.Request, tx sip.ServerTransaction) {
 		if request.GetHeader("Authorization") == nil {
@@ -143,7 +152,9 @@ func startFakePBX(t *testing.T) *fakePBX {
 		}
 		pbx.invites <- request
 		_ = dialog.Respond(sip.StatusRinging, "Ringing", nil)
-		_ = dialog.RespondSDP([]byte(testPBXSDP))
+		if dialog.RespondSDP([]byte(testPBXSDP)) == nil {
+			pbx.answered <- dialog
+		}
 	})
 	server.OnAck(func(request *sip.Request, tx sip.ServerTransaction) { _ = pbx.serving.ReadAck(request, tx) })
 	server.OnBye(func(request *sip.Request, tx sip.ServerTransaction) {
@@ -450,5 +461,67 @@ func TestFromPBXAcceptsOnlyThePBXAddress(t *testing.T) {
 	request.SetSource("[::1]:5060")
 	if !loopback.fromPBX(request) {
 		t.Fatal("loopback PBX rejected over ::1")
+	}
+}
+
+// The PBX hanging up first (an IVR ending its prompt) must end the modem call
+// right away; the caller otherwise sits in silence.
+func TestPBXHangupEndsAnsweredModemCall(t *testing.T) {
+	// 192.0.2.1 (TEST-NET) is unreachable: ACK and BYE must follow the PBX's
+	// source address, not its advertised Contact.
+	pbx := startFakePBXAdvertising(t, "192.0.2.1")
+	fake := newFakePhone()
+	startTestClient(t, pbx, fake)
+
+	fake.stream <- phone.Event{Type: "incoming_call", Call: phone.CallView{
+		CallID: "in-2", DeviceID: "dev1", Direction: "inbound", Peer: "+12135550199", Status: phone.StatusRinging,
+	}}
+	var dialog *sipgo.DialogServerSession
+	select {
+	case dialog = <-pbx.answered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("PBX did not answer")
+	}
+	select {
+	case <-fake.answered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("PBX answer did not answer the modem call")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := dialog.Bye(ctx); err != nil {
+		t.Fatalf("PBX BYE: %v", err)
+	}
+	select {
+	case callID := <-fake.hungup:
+		if callID != "in-2" {
+			t.Fatalf("hung up %q", callID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("PBX BYE did not hang up the modem call")
+	}
+}
+
+func TestModemHangupReachesPBXBehindExternalContact(t *testing.T) {
+	pbx := startFakePBXAdvertising(t, "192.0.2.1")
+	fake := newFakePhone()
+	startTestClient(t, pbx, fake)
+
+	fake.stream <- phone.Event{Type: "incoming_call", Call: phone.CallView{
+		CallID: "in-3", DeviceID: "dev1", Direction: "inbound", Peer: "+12135550199", Status: phone.StatusRinging,
+	}}
+	select {
+	case <-fake.answered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("PBX answer did not answer the modem call")
+	}
+	fake.mu.Lock()
+	media := fake.media[len(fake.media)-1]
+	fake.mu.Unlock()
+	fake.stream <- phone.Event{Type: "call_ended", Call: phone.CallView{CallID: "in-3", MediaID: media.id}}
+	select {
+	case <-pbx.byes:
+	case <-time.After(3 * time.Second):
+		t.Fatal("modem hangup BYE went to the advertised Contact instead of the PBX")
 	}
 }
