@@ -283,6 +283,7 @@ type Session struct {
 	ikeIdentity            string
 	eapIdentity            string
 	eapIdentitySet         bool
+	eapLastStep            string // last EAP step seen, reported with EAP-Failure
 	eapTranscript          [][]byte
 	eapIdentityTranscript  [][]byte
 	eapResultIndicated     bool

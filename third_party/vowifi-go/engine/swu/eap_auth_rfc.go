@@ -9,9 +9,27 @@ import (
 	"github.com/iniwex5/vowifi-go/engine/logger"
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
 	"github.com/iniwex5/vowifi-go/engine/swu/eapaka"
+	"go.uber.org/zap"
 )
 
 const eapTypeIdentity byte = 1
+
+func eapStepName(packet eapaka.Packet) string {
+	switch {
+	case packet.Type == eapTypeIdentity:
+		return "eap_identity"
+	case isAKAIdentityRequest(packet):
+		return "aka_identity"
+	case isAKAChallenge(packet):
+		return "aka_challenge"
+	case isAKANotification(packet):
+		return "aka_notification"
+	case isAKAReauthenticationRequest(packet):
+		return "aka_reauthentication"
+	default:
+		return fmt.Sprintf("eap_type_%d_subtype_%d", packet.Type, packet.Subtype)
+	}
+}
 
 func (s *Session) handleRFCEAP(data []byte) error {
 	payloads, err := s.handleEAP(data)
@@ -31,6 +49,9 @@ func (s *Session) handleEAP(data []byte) ([]ikev2.Payload, error) {
 	}
 	switch packet.Code {
 	case eapaka.CodeRequest:
+		s.eapLastStep = eapStepName(packet)
+		logger.Info("EAP request from ePDG", zap.String("step", s.eapLastStep),
+			zap.Uint8("type", packet.Type), zap.Uint8("subtype", packet.Subtype))
 		return s.handleRFCEAPRequest(packet, data)
 	case eapaka.CodeSuccess:
 		if len(s.eapKeys.MSK) == 0 {
@@ -43,7 +64,10 @@ func (s *Session) handleEAP(data []byte) ([]ikev2.Payload, error) {
 		s.stage = stageFinal
 		return nil, nil
 	case eapaka.CodeFailure:
-		return nil, errors.New("swu: EAP authentication failed")
+		// After a verified AKA challenge the SIM keys are right, so a failure
+		// there means the ePDG/AAA refused the subscriber or the device.
+		logger.Warn("EAP-Failure from ePDG", zap.String("after", s.eapLastStep))
+		return nil, fmt.Errorf("swu: EAP authentication failed after %s", s.eapLastStep)
 	default:
 		return nil, fmt.Errorf("swu: unexpected EAP code %d", packet.Code)
 	}
@@ -204,6 +228,8 @@ func (s *Session) handleRFCChallenge(packet eapaka.Packet) ([]ikev2.Payload, err
 	if err != nil {
 		return nil, err
 	}
+	s.eapLastStep = "aka_challenge_answered"
+	logger.Info("EAP-AKA challenge verified; RES sent")
 	_, s.eapResultIndicated = eapaka.FindAttribute(response.Attributes, eapaka.AttributeResultInd)
 	s.eapResultConfirmed = false
 	s.eapKeys = keys
@@ -242,6 +268,14 @@ func (s *Session) buildConfiguredChallengeResponse(
 func (s *Session) handleRFCNotification(packet eapaka.Packet) ([]ikev2.Payload, error) {
 	if err := validateParsedSimakaAttributes(packet.Type, packet.Attributes); err != nil {
 		return nil, err
+	}
+	if attr, ok := eapaka.FindAttribute(packet.Attributes, eapaka.AttributeNotification); ok {
+		if code, err := attr.NotificationValue(); err == nil {
+			// RFC 4187 10.19: 0 = general failure after authentication,
+			// 1026 = temporarily denied access, 1031 = not subscribed to the
+			// requested service, 16384 = general failure.
+			logger.Info("EAP-AKA notification from ePDG", zap.Uint16("code", code))
+		}
 	}
 	if len(s.eapKeys.KAut) == 0 {
 		response, handled, err := eapaka.BuildNotificationResponse(packet)

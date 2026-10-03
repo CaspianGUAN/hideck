@@ -10,6 +10,8 @@ import (
 
 	"github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
+	"github.com/iniwex5/vowifi-go/engine/logger"
+	"go.uber.org/zap"
 )
 
 // requiredConfiguredIMSI returns the configured IMSI or an error.
@@ -429,7 +431,14 @@ func (s *Session) deviceIdentityPayloads() ([]ikev2.Payload, error) {
 		imei = spoofAppleIMEI(imsi)
 	}
 	if imei == "" {
+		logger.Info("IKE_AUTH sends no device identity")
 		return nil, nil
+	}
+	if len(imei) >= 8 {
+		// The TAC (first 8 digits) names the device model; ePDGs that
+		// whitelist handsets judge it, not the serial.
+		logger.Info("IKE_AUTH device identity", zap.String("tac", imei[:8]),
+			zap.Bool("generated", strings.TrimSpace(s.cfg.DeviceIdentityIMEI) == ""))
 	}
 	encoded, err := encodeIMEITBCD(imei)
 	if err != nil {
