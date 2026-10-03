@@ -722,11 +722,11 @@ func TestBuildIMSByeUsesLearnedContactAndRecordRoute(t *testing.T) {
 	call := NewCall(agent, callstate.DirectionOutbound, "bye-dialog", "+447700900001")
 	call.setVoiceDialog(&voiceSIPDialog{
 		localURI: "sip:local@ims.example", remoteURI: "sip:+447700900001@ims.example;user=phone",
-		remoteTarget: "sip:+447700900001@ims.example;user=phone",
+		remoteTarget:  "sip:+447700900001@ims.example;user=phone",
 		contactHeader: "<sip:local@192.0.2.10:48554;ob>",
-		localAddress: "192.0.2.10:50309", transport: "tcp",
+		localAddress:  "192.0.2.10:50309", transport: "tcp",
 		serviceRoute: []string{"<sip:orig@scscf.ims.example;lr>"},
-		localTag: "local-tag", cseq: 1, inviteCSeq: 1,
+		localTag:     "local-tag", cseq: 1, inviteCSeq: 1,
 	})
 	call.learnVoiceDialog(imscore.SIPResponse{
 		Headers: map[string]string{
@@ -795,5 +795,31 @@ func TestExtractAndApplyPTMapping(t *testing.T) {
 	mapping := codecPTMapping(remote, client)
 	if mapping[96] != 8 {
 		t.Errorf("mapping = %+v, want {96:8}", mapping)
+	}
+}
+
+func TestCodecPTMappingKeepsAMRFramingApart(t *testing.T) {
+	remote, _ := ParseSDP([]byte("v=0\r\nm=audio 100 RTP/AVP 118 107\r\n" +
+		"a=rtpmap:118 AMR-WB/16000\r\na=fmtp:118 octet-align=1;mode-change-capability=2\r\n" +
+		"a=rtpmap:107 AMR-WB/16000\r\na=fmtp:107 mode-change-capability=2;max-red=0\r\n"))
+	client, _ := ParseSDP([]byte("v=0\r\nm=audio 200 RTP/AVP 104 110\r\n" +
+		"a=rtpmap:104 AMR-WB/16000\r\na=fmtp:104 mode-change-capability=2; max-red=0\r\n" +
+		"a=rtpmap:110 AMR-WB/16000\r\na=fmtp:110 octet-align=1; mode-change-capability=2; max-red=0\r\n"))
+	for range 20 {
+		mapping := codecPTMapping(remote, client)
+		if len(mapping) != 2 || mapping[107] != 104 || mapping[118] != 110 {
+			t.Fatalf("mapping = %+v, want {107:104 118:110}", mapping)
+		}
+	}
+}
+
+func TestCodecPTMappingGivesEachClientPayloadOneIMSPayload(t *testing.T) {
+	remote, _ := ParseSDP([]byte("v=0\r\nm=audio 100 RTP/AVP 107 108\r\n" +
+		"a=rtpmap:107 AMR-WB/16000\r\na=fmtp:107 mode-set=2\r\n" +
+		"a=rtpmap:108 AMR-WB/16000\r\na=fmtp:108 mode-change-capability=2\r\n"))
+	client, _ := ParseSDP([]byte("v=0\r\nm=audio 200 RTP/AVP 104\r\na=rtpmap:104 AMR-WB/16000\r\n"))
+	mapping := codecPTMapping(remote, client)
+	if len(mapping) != 1 || mapping[107] != 104 {
+		t.Fatalf("mapping = %+v, want {107:104}", mapping)
 	}
 }

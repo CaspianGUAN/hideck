@@ -110,16 +110,58 @@ func codecPTMapping(remote, client *SDPInfo) map[int]int {
 	if remote == nil || client == nil {
 		return mapping
 	}
+	// IMS offers often list AMR/AMR-WB twice (bandwidth-efficient and
+	// octet-aligned). Match the framing too, and give each client payload type
+	// to one IMS payload type only; otherwise the reverse (uplink) mapping picks
+	// a variant at random and the far end cannot decode our frames.
+	claimed := make(map[int]struct{})
 	for _, remoteCodec := range remote.Codecs {
 		if remoteCodec.PayloadType < dynamicPayloadStart {
 			continue
 		}
-		clientCodec := client.FindCodec(remoteCodec.Name, remoteCodec.ClockRate, remoteCodec.Channels)
-		if clientCodec != nil && clientCodec.PayloadType != remoteCodec.PayloadType {
-			mapping[remoteCodec.PayloadType] = clientCodec.PayloadType
+		clientCodec := findMatchingClientCodec(client, remoteCodec)
+		if clientCodec == nil || clientCodec.PayloadType == remoteCodec.PayloadType {
+			continue
 		}
+		if _, taken := claimed[clientCodec.PayloadType]; taken {
+			continue
+		}
+		claimed[clientCodec.PayloadType] = struct{}{}
+		mapping[remoteCodec.PayloadType] = clientCodec.PayloadType
 	}
 	return mapping
+}
+
+func findMatchingClientCodec(client *SDPInfo, remoteCodec CodecInfo) *CodecInfo {
+	octetAligned := sdpOctetAligned(remoteCodec.Fmtp)
+	for index := range client.Codecs {
+		codec := &client.Codecs[index]
+		if !strings.EqualFold(codec.Name, remoteCodec.Name) {
+			continue
+		}
+		if remoteCodec.ClockRate > 0 && codec.ClockRate != remoteCodec.ClockRate {
+			continue
+		}
+		if remoteCodec.Channels > 0 && codec.Channels != remoteCodec.Channels {
+			continue
+		}
+		if sdpOctetAligned(codec.Fmtp) != octetAligned {
+			continue
+		}
+		return codec
+	}
+	return nil
+}
+
+func sdpOctetAligned(fmtp string) bool {
+	for _, field := range strings.FieldsFunc(strings.ToLower(fmtp), func(char rune) bool {
+		return char == ';' || char == ' ' || char == '\t'
+	}) {
+		if field == "octet-align=1" {
+			return true
+		}
+	}
+	return false
 }
 
 func rewriteClientSDPLine(
