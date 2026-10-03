@@ -160,7 +160,11 @@ func chainSessionDown(config sessionCallbackConfig) {
 		if config.request.Hooks.OnSessionDown != nil {
 			config.request.Hooks.OnSessionDown(config.ctx)
 		}
-		sendOutcome(config.outcomes, InterruptOutcome{Kind: "session_down", Reason: "swu_session_down"})
+		reason := "swu_session_down"
+		if err := config.session.TerminalError(); err != nil {
+			reason = "swu_session_down: " + err.Error()
+		}
+		sendOutcome(config.outcomes, InterruptOutcome{Kind: "session_down", Reason: reason})
 	}
 }
 

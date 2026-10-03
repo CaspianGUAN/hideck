@@ -617,6 +617,9 @@ func (s *Session) failSession(err error) {
 	s.mu.RLock()
 	wasEstablished := s.state == stateEstablished
 	s.mu.RUnlock()
+	if wasEstablished && !errors.Is(err, context.Canceled) {
+		logger.Warn("SWu established session failed", zap.Error(err))
+	}
 	s.sendEstablishedDeletes()
 	s.setTerminalError(err)
 	if wasEstablished {
