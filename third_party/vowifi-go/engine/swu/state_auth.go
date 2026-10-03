@@ -330,6 +330,7 @@ func (s *Session) buildIKEAuthInitPayloads() ([]ikev2.Payload, error) {
 	idi := &ikev2.EncryptedPayloadID{
 		IDType: ikev2.IDTypeRFC822Addr, IDData: []byte(identity), IsInitiator: true,
 	}
+	logger.Info("IKE_AUTH requests APN", zap.String("apn", s.cfg.APN))
 	idr := &ikev2.EncryptedPayloadID{
 		IDType: ikev2.ID_FQDN, IDData: []byte(s.cfg.APN), IsInitiator: false,
 	}
@@ -504,6 +505,7 @@ func (s *Session) applyEAPHandlingResult(payloads []ikev2.Payload) (string, erro
 			s.responderAuthenticated = true
 		}
 	}
+	logIKEAuthNotifies(payloads)
 	for _, pl := range payloads {
 		switch pl.Type() {
 		case ikev2.PayloadEAP:
@@ -821,4 +823,30 @@ func (s *Session) verifyResponderAuth(payloads []ikev2.Payload) error {
 		return errors.New("swu: no IKE SA keys for AUTH verification")
 	}
 	return s.verifyResponderCertificateAuth(payloads)
+}
+
+// 3GPP TS 24.302 8.1.2.2 private notify error types an ePDG attaches to a
+// rejected IKE_AUTH; they name the reason an EAP-Failure alone does not.
+var threeGPPNotifyNames = map[uint16]string{
+	8192: "PDN_CONNECTION_REJECTION", 8193: "MAX_CONNECTION_REACHED",
+	9000: "NON_3GPP_ACCESS_TO_EPC_NOT_ALLOWED", 9001: "USER_UNKNOWN",
+	9002: "NO_APN_SUBSCRIPTION", 9003: "AUTHORIZATION_REJECTED",
+	9006: "ILLEGAL_ME", 10500: "NETWORK_FAILURE", 11001: "RAT_TYPE_NOT_ALLOWED",
+	11005: "IMEI_NOT_ACCEPTED", 11011: "PLMN_NOT_ALLOWED",
+	11055: "UNAUTHENTICATED_EMERGENCY_NOT_SUPPORTED",
+}
+
+func logIKEAuthNotifies(payloads []ikev2.Payload) {
+	for _, payload := range payloads {
+		notify, ok := payload.(*ikev2.EncryptedPayloadNotify)
+		if !ok {
+			continue
+		}
+		name, known := threeGPPNotifyNames[notify.NotifyType]
+		if !known {
+			name = ikev2.NotifyTypeToString(notify.NotifyType)
+		}
+		logger.Info("IKE_AUTH notify from ePDG", zap.Uint16("type", notify.NotifyType),
+			zap.String("name", name), zap.Int("data_len", len(notify.NotifyData)))
+	}
 }
