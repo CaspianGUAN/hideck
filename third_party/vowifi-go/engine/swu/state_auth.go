@@ -372,7 +372,20 @@ func (s *Session) buildIKEAuthInitPayloads() ([]ikev2.Payload, error) {
 		payloads = append(payloads, childKE)
 	}
 	if s.cfg != nil && s.cfg.IKEAuthMinimal {
-		return append(payloads, tsi, tsr, eapOnly), nil
+		payloads = append(payloads, tsi, tsr, eapOnly)
+		// device_identity_enabled adds the 3GPP DEVICE_IDENTITY up front, as
+		// iPhones do for carriers that bind Wi-Fi Calling entitlement to the
+		// device (AIS). Only a configured IMEI is sent, never a generated one.
+		if s.cfg.EnableDeviceIdentitySpoof && strings.TrimSpace(s.cfg.DeviceIdentityIMEI) != "" {
+			identity, err := s.deviceIdentityPayloads()
+			if err != nil {
+				return nil, err
+			}
+			if len(identity) > 0 {
+				payloads = append(payloads, identity[0])
+			}
+		}
+		return payloads, nil
 	}
 	payloads = append(payloads, tsi, tsr, eapOnly, mobike, ticket)
 	payloads = append(payloads, s.initialContactNotify()...)

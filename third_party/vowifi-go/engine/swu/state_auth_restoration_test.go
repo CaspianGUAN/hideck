@@ -261,3 +261,28 @@ func TestIKEIdentityModeSelectsAKAPrimeNAI(t *testing.T) {
 		}
 	}
 }
+
+func TestMinimalIKEAuthCanSendConfiguredDeviceIdentity(t *testing.T) {
+	session := NewSession(&Config{
+		IMSI: "520030393351967", APN: "IMS", DeviceIdentityIMEI: "358983361433761",
+		IKEAuthMinimal: true, EnableDeviceIdentitySpoof: true,
+	})
+	payloads, err := session.buildIKEAuthInitPayloads()
+	if err != nil {
+		t.Fatalf("buildIKEAuthInitPayloads: %v", err)
+	}
+	got := notifyTypes(payloads)
+	if len(got) != 2 || got[0] != ikev2.EAP_ONLY_AUTHENTICATION || got[1] != ikev2.DEVICE_IDENTITY_3GPP {
+		t.Fatalf("notifies = %v, want EAP_ONLY_AUTHENTICATION then DEVICE_IDENTITY_3GPP", got)
+	}
+
+	// No configured IMEI: never fall back to a generated one.
+	session = NewSession(&Config{IMSI: "520030393351967", APN: "IMS", IKEAuthMinimal: true, EnableDeviceIdentitySpoof: true})
+	payloads, err = session.buildIKEAuthInitPayloads()
+	if err != nil {
+		t.Fatalf("buildIKEAuthInitPayloads: %v", err)
+	}
+	if got := notifyTypes(payloads); len(got) != 1 {
+		t.Fatalf("notifies without IMEI = %v, want only EAP_ONLY_AUTHENTICATION", got)
+	}
+}
