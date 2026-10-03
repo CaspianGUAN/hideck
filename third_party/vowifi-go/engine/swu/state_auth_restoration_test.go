@@ -203,3 +203,48 @@ func testAKAResult() AKAResult {
 		IK:  bytes.Repeat([]byte{0x25}, 16),
 	}
 }
+
+func notifyTypes(payloads []ikev2.Payload) []uint16 {
+	var types []uint16
+	for _, payload := range payloads {
+		if notification, ok := payload.(*ikev2.EncryptedPayloadNotify); ok {
+			types = append(types, notification.NotifyType)
+		}
+	}
+	return types
+}
+
+func TestMinimalIKEAuthSendsOnlyEAPOnly(t *testing.T) {
+	session := NewSession(&Config{
+		IMSI: "520030393351967", APN: "ims", DeviceIdentityIMEI: "358983361433761", IKEAuthMinimal: true,
+	})
+	payloads, err := session.buildIKEAuthInitPayloads()
+	if err != nil {
+		t.Fatalf("buildIKEAuthInitPayloads: %v", err)
+	}
+	if got := notifyTypes(payloads); len(got) != 1 || got[0] != ikev2.EAP_ONLY_AUTHENTICATION {
+		t.Fatalf("minimal IKE_AUTH notifies = %v, want only EAP_ONLY_AUTHENTICATION", got)
+	}
+}
+
+func TestMinimalIKEAuthAnswersRequestedDeviceIdentity(t *testing.T) {
+	session := NewSession(&Config{
+		IMSI: "520030393351967", APN: "ims", DeviceIdentityIMEI: "358983361433761", IKEAuthMinimal: true,
+	})
+	request := []ikev2.Payload{&ikev2.EncryptedPayloadNotify{NotifyType: ikev2.DEVICE_IDENTITY_3GPP, NotifyData: []byte{0, 1, 1}}}
+	if !ikeAuthRequestsDeviceIdentity(request) {
+		t.Fatal("DEVICE_IDENTITY request not detected")
+	}
+	session.deviceIdentityAsked = true
+	eap := []ikev2.Payload{&ikev2.EncryptedPayloadEAP{}}
+	response, err := session.withRequestedDeviceIdentity(eap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := notifyTypes(response); len(got) != 1 || got[0] != ikev2.DEVICE_IDENTITY_3GPP {
+		t.Fatalf("response notifies = %v, want one DEVICE_IDENTITY_3GPP", got)
+	}
+	if again, _ := session.withRequestedDeviceIdentity(eap); len(notifyTypes(again)) != 0 {
+		t.Fatal("DEVICE_IDENTITY sent twice for one request")
+	}
+}

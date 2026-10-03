@@ -92,6 +92,7 @@ func mergePresetIKE(config *EffectiveCarrierConfig, preset CarrierPreset) {
 		config.DPDIntervalSeconds = clampIR51DPDInterval(*preset.DPDIntervalSeconds)
 	}
 	applyBoolPtr(&config.DeviceIdentityEnabled, preset.DeviceIdentityEnabled)
+	applyBoolPtr(&config.IKEAuthMinimal, preset.IKEAuthMinimal)
 	applyBoolPtr(&config.EnableLegacyCiphers, preset.EnableLegacyCiphers)
 	if len(preset.AllowedLegacyCiphers) > 0 {
 		config.AllowedLegacyCiphers = normalizeStringList(preset.AllowedLegacyCiphers)

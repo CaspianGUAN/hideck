@@ -377,3 +377,22 @@ func TestIMSRegisterTemplateJSONCompatibility(t *testing.T) {
 		t.Fatalf("interim JSON = %+v", interim)
 	}
 }
+
+func TestIKEAuthMinimalOverrideReachesCarrierPlan(t *testing.T) {
+	ClearCarrierOverrides()
+	t.Cleanup(ClearCarrierOverrides)
+	path := filepath.Join(t.TempDir(), "carrier_overrides.yaml")
+	data := []byte("carrier_overrides:\n  \"52003\":\n    device_model: ec25\n    ike_auth_minimal: true\n")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := LoadAndSetCarrierOverridesFile(path); err != nil {
+		t.Fatal(err)
+	}
+	if !CarrierPlanFromEffectiveConfig(ResolveEffectiveCarrierConfig("520", "03")).IKE.IKEAuthMinimal {
+		t.Fatal("ike_auth_minimal override did not reach the AIS (520/03) IKE plan")
+	}
+	if ResolveEffectiveCarrierConfig("310", "240").IKEAuthMinimal {
+		t.Fatal("ike_auth_minimal leaked to T-Mobile (310/240)")
+	}
+}

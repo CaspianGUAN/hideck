@@ -100,6 +100,10 @@ func copyOverridePointers(preset *CarrierPreset, override CarrierOverride) {
 		value := *override.DeviceIdentityEnabled
 		preset.DeviceIdentityEnabled = &value
 	}
+	if override.IKEAuthMinimal != nil {
+		value := *override.IKEAuthMinimal
+		preset.IKEAuthMinimal = &value
+	}
 	if override.NATKeepaliveSeconds != nil {
 		value := *override.NATKeepaliveSeconds
 		preset.NATKeepaliveSeconds = &value

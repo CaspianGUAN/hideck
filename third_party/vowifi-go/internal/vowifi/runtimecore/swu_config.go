@@ -42,6 +42,7 @@ func BuildSWUConfig(cfg SessionConfig) *swu.Config {
 		AKAChallengeMode:          plan.IKE.AKAChallengeMode,
 		AKAIdentityMode:           plan.IKE.AKAIdentityMode,
 		AKAPrimePreferred:         plan.IKE.AKAPrimePreferred,
+		IKEAuthMinimal:            plan.IKE.IKEAuthMinimal,
 		AlgorithmPolicy:           plan.IKE.AlgorithmPolicy,
 		IKEProposals:              append([]string(nil), plan.IKE.IKEProposals...),
 		ESPProposals:              append([]string(nil), plan.IKE.ESPProposals...),

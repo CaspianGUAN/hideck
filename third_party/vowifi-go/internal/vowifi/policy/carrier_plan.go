@@ -43,6 +43,7 @@ func CarrierPlanFromEffectiveConfig(config EffectiveCarrierConfig) CarrierPlan {
 			ReauthIntervalSeconds:       config.ReauthIntervalSeconds,
 			IKERekeyIntervalSeconds:     config.IKERekeyIntervalSeconds,
 			AKAPrimePreferred:           config.AKAPrimePreferred,
+			IKEAuthMinimal:              config.IKEAuthMinimal,
 		},
 		IMS: IMSPlan{
 			Domain: config.IMSDomain, Realm: config.IMSRealm, Registrar: config.IMSRegistrar,
@@ -88,6 +89,7 @@ func EffectiveCarrierConfigFromCarrierPlan(plan CarrierPlan) EffectiveCarrierCon
 		ReauthIntervalSeconds:       plan.IKE.ReauthIntervalSeconds,
 		IKERekeyIntervalSeconds:     plan.IKE.IKERekeyIntervalSeconds,
 		AKAPrimePreferred:           plan.IKE.AKAPrimePreferred,
+		IKEAuthMinimal:              plan.IKE.IKEAuthMinimal,
 		IMSDomain:                   plan.IMS.Domain, IMSRealm: plan.IMS.Realm, IMSRegistrar: plan.IMS.Registrar,
 		IMSPCSCF: plan.IMS.PCSCF, IMSUserAgent: plan.IMS.UserAgent, IMSTransport: plan.IMS.Transport,
 		IMSIdentitySource: plan.IMS.IdentitySource, IMSLocalPort: plan.IMS.LocalPort,

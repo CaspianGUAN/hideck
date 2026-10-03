@@ -116,6 +116,10 @@ type Config struct {
 	// OmitInitialContact skips the IKE_AUTH INITIAL_CONTACT notify. RFC 7296
 	// 2.8.3 requires omitting it while an older IKE SA is still forwarding.
 	OmitInitialContact bool
+	// IKEAuthMinimal sends the first IKE_AUTH with only IDi, IDr, CP, SA,
+	// TS and EAP_ONLY (as SWu reference clients do) and answers
+	// DEVICE_IDENTITY only when the ePDG requests it. Per carrier.
+	IKEAuthMinimal bool
 	// ResumeTicket and ResumeOldSKd restore the RFC 5723 cross-session
 	// credential. OnTicketUpdate persists replacement or invalidation.
 	ResumeTicket   []byte
@@ -284,6 +288,7 @@ type Session struct {
 	eapIdentity            string
 	eapIdentitySet         bool
 	eapLastStep            string // last EAP step seen, reported with EAP-Failure
+	deviceIdentityAsked    bool   // ePDG requested DEVICE_IDENTITY (minimal IKE_AUTH)
 	eapTranscript          [][]byte
 	eapIdentityTranscript  [][]byte
 	eapResultIndicated     bool

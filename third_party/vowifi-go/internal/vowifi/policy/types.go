@@ -125,6 +125,7 @@ type CarrierOverride struct {
 	IKEIdentityMode               string                      `yaml:"ike_identity_mode"`
 	AKAIdentityMode               string                      `yaml:"aka_identity_mode"`
 	DeviceIdentityEnabled         *bool                       `yaml:"device_identity_enabled"`
+	IKEAuthMinimal                *bool                       `yaml:"ike_auth_minimal"`
 	DeviceIdentityIMEI            string                      `yaml:"device_identity_imei"`
 	NATKeepaliveSeconds           *int                        `yaml:"nat_keepalive_seconds"`
 	DPDIntervalSeconds            *int                        `yaml:"dpd_interval_seconds"`
@@ -171,6 +172,7 @@ type CarrierPreset struct {
 	IKEIdentityMode, AKAIdentityMode string
 	DeviceIdentityIMEI               string
 	DeviceIdentityEnabled            *bool
+	IKEAuthMinimal                   *bool
 	NATKeepaliveSeconds              *int
 	DPDIntervalSeconds               *int
 	EnableLegacyCiphers              *bool
@@ -223,6 +225,7 @@ type EffectiveCarrierConfig struct {
 	SMSRoutingMethod, SMSRoutingGW                     string
 	ForceSMSCAuth                                      bool
 	AKAPrimePreferred                                  bool
+	IKEAuthMinimal                                     bool
 	XCAPAPN                                            string
 	MediaTypeRestrictionPolicy                         string
 	PreferredAccessNetworks                            []string
@@ -263,6 +266,7 @@ type IKEPlan struct {
 	DPDKeepaliveIntervalSeconds, ReauthIntervalSeconds int
 	IKERekeyIntervalSeconds                            int
 	AKAPrimePreferred                                  bool
+	IKEAuthMinimal                                     bool
 }
 type IMSPlan struct {
 	Domain, Realm, Registrar, PCSCF, UserAgent, Transport, IdentitySource string

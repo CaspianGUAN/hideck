@@ -85,6 +85,7 @@ func cloneCarrierOverridePointers(value *CarrierOverride) {
 	value.E911.Enabled = cloneBoolPointer(value.E911.Enabled)
 	value.EPDGPort = cloneIntPointer(value.EPDGPort)
 	value.DeviceIdentityEnabled = cloneBoolPointer(value.DeviceIdentityEnabled)
+	value.IKEAuthMinimal = cloneBoolPointer(value.IKEAuthMinimal)
 	value.NATKeepaliveSeconds = cloneIntPointer(value.NATKeepaliveSeconds)
 	value.DPDIntervalSeconds = cloneIntPointer(value.DPDIntervalSeconds)
 	value.EnableLegacyCiphers = cloneBoolPointer(value.EnableLegacyCiphers)
