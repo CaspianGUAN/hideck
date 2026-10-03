@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
+	"github.com/iniwex5/vowifi-go/engine/logger"
+	"go.uber.org/zap"
 )
 
 const (
@@ -25,6 +27,9 @@ type rekeyTimerSpec struct {
 	target        **time.Timer
 	action        func() error
 	immediateFail func(error) bool
+	// declined reports a rejection that leaves the current SA usable; the
+	// timer stops instead of tearing the session down.
+	declined      func(error) bool
 	retryInterval time.Duration
 }
 
@@ -75,6 +80,10 @@ func (s *Session) startChildSARekeyTimer(interval time.Duration) {
 		name: "CHILD_SA", interval: interval,
 		reset: reset, target: &s.childRekeyTimer, action: s.RekeyChildSA,
 		immediateFail: isChildSANotFoundError,
+		// Some ePDGs (T-Mobile US) refuse every UE-initiated CHILD_SA rekey
+		// with NO_PROPOSAL_CHOSEN, with or without PFS, while the SA stays
+		// valid. Keep it and leave rekeying to the ePDG.
+		declined: isNoProposalChosenError,
 	})
 }
 
@@ -122,6 +131,11 @@ func (s *Session) runRekeyTimer(timer *time.Timer, spec rekeyTimerSpec) {
 				continue
 			}
 			failures++
+			if failures >= rekeyMaxFailures && spec.declined != nil && spec.declined(err) {
+				logger.Warn("ePDG declined UE-initiated rekey; keeping the current SA and leaving rekey to the ePDG",
+					zap.String("sa", spec.name), zap.Error(err))
+				return
+			}
 			if failures >= rekeyMaxFailures || spec.immediateFail != nil && spec.immediateFail(err) {
 				s.failEstablishedControl(fmt.Errorf("swu: %s rekey failed: %w", spec.name, err))
 				return

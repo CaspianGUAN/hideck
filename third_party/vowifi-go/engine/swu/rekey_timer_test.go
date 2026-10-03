@@ -54,3 +54,26 @@ func waitForRekeyTimerFailure(t *testing.T, session *Session) {
 	}
 	session.rekeyTimerWG.Wait()
 }
+
+func TestDeclinedChildRekeyKeepsSessionUp(t *testing.T) {
+	session := NewSession(&Config{})
+	attempts := 0
+	session.startRekeyTimer(rekeyTimerSpec{
+		name: "CHILD_SA", interval: time.Millisecond, target: &session.childRekeyTimer,
+		retryInterval: time.Millisecond, immediateFail: isChildSANotFoundError,
+		declined: isNoProposalChosenError,
+		action: func() error {
+			attempts++
+			return &createChildSARejectError{NotifyType: ikev2.NO_PROPOSAL_CHOSEN}
+		},
+	})
+	session.rekeyTimerWG.Wait()
+	select {
+	case <-session.done:
+		t.Fatalf("session failed: %v", session.TerminalError())
+	default:
+	}
+	if attempts != rekeyMaxFailures {
+		t.Fatalf("attempts = %d, want %d", attempts, rekeyMaxFailures)
+	}
+}
