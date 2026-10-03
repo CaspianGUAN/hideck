@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 	"github.com/iniwex5/vowifi-go/engine/logger"
@@ -229,7 +230,10 @@ func (s *Session) handleRFCChallenge(packet eapaka.Packet) ([]ikev2.Payload, err
 		return nil, err
 	}
 	s.eapLastStep = "aka_challenge_answered"
-	logger.Info("EAP-AKA challenge verified; RES sent")
+	logger.Info("EAP-AKA challenge verified; RES sent",
+		zap.Int("res_bytes", len(aka.RES)),
+		zap.String("request_attrs", eapAttributeTypes(packet.Attributes)),
+		zap.String("response_attrs", eapAttributeTypes(response.Attributes)))
 	_, s.eapResultIndicated = eapaka.FindAttribute(response.Attributes, eapaka.AttributeResultInd)
 	s.eapResultConfirmed = false
 	s.eapKeys = keys
@@ -341,4 +345,12 @@ func eapBytesPayload(raw []byte) []ikev2.Payload {
 	return []ikev2.Payload{
 		&ikev2.EncryptedPayloadEAP{EAPMessage: append([]byte(nil), raw...)},
 	}
+}
+
+func eapAttributeTypes(attributes []eapaka.Attribute) string {
+	types := make([]string, 0, len(attributes))
+	for _, attribute := range attributes {
+		types = append(types, fmt.Sprint(attribute.Type))
+	}
+	return strings.Join(types, ",")
 }
