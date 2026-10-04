@@ -82,7 +82,24 @@ func retryDecision(err error, attempt int, delayFn func(int) int64) (int64, int)
 	if delayFn == nil {
 		return 0, attempt + 1
 	}
-	return delayFn(attempt), attempt + 1
+	delay := delayFn(attempt)
+	if errors.Is(err, swu.ErrEAPAuthenticationFailed) {
+		delay = max(delay, eapFailureBackoff(attempt))
+	}
+	return delay, attempt + 1
+}
+
+// eapFailureBackoff spaces out retries after the AAA refused the subscriber:
+// a fixed 30 s loop runs hundreds of failed authentications an hour, which
+// carriers throttle.
+func eapFailureBackoff(attempt int) int64 {
+	steps := []time.Duration{
+		30 * time.Second, time.Minute, 2 * time.Minute, 5 * time.Minute, 10 * time.Minute,
+	}
+	if attempt < len(steps) {
+		return int64(steps[attempt])
+	}
+	return int64(30 * time.Minute)
 }
 
 type retryAtError interface {

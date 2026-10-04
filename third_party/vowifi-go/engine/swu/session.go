@@ -25,6 +25,10 @@ import (
 // ErrFreshRuntimeRequired tells the host to replace the current IKE runtime.
 var ErrFreshRuntimeRequired = errors.New("swu: full reauthentication requires a fresh runtime session")
 
+// ErrEAPAuthenticationFailed wraps an EAP-Failure from the ePDG/AAA. Retrying
+// it quickly does not help and can get the subscriber throttled.
+var ErrEAPAuthenticationFailed = errors.New("swu: EAP authentication failed")
+
 // Transport is the original injectable SWu network boundary.
 type Transport = ipsec.Transport
 

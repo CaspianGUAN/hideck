@@ -68,7 +68,7 @@ func (s *Session) handleEAP(data []byte) ([]ikev2.Payload, error) {
 		// After a verified AKA challenge the SIM keys are right, so a failure
 		// there means the ePDG/AAA refused the subscriber or the device.
 		logger.Warn("EAP-Failure from ePDG", zap.String("after", s.eapLastStep))
-		return nil, fmt.Errorf("swu: EAP authentication failed after %s", s.eapLastStep)
+		return nil, fmt.Errorf("%w after %s", ErrEAPAuthenticationFailed, s.eapLastStep)
 	default:
 		return nil, fmt.Errorf("swu: unexpected EAP code %d", packet.Code)
 	}

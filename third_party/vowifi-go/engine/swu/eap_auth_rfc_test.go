@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha1"
+	"errors"
 	"net"
 	"strings"
 	"testing"
@@ -566,5 +567,16 @@ func TestChallengeResponseOffModeStillOmitsCheckcode(t *testing.T) {
 	attrs := session.appendAKAChallengeMetaAttrs(nil, challengeWithCheckcode(eapaka.CheckcodeAttribute(nil)))
 	if _, ok := responseCheckcode(t, attrs); ok {
 		t.Fatal("off mode sent AT_CHECKCODE")
+	}
+}
+
+func TestEAPFailureIsRecognisable(t *testing.T) {
+	session := NewSession(&Config{})
+	raw, err := (eapaka.Packet{Code: eapaka.CodeFailure, Identifier: 3}).MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.handleEAP(raw); !errors.Is(err, ErrEAPAuthenticationFailed) {
+		t.Fatalf("handleEAP(EAP-Failure) = %v, want ErrEAPAuthenticationFailed", err)
 	}
 }
