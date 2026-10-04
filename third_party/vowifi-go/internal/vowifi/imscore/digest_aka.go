@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
 )
@@ -25,6 +26,11 @@ type DigestChallenge struct {
 	AKA       bool
 	RAND      []byte // decoded RAND from the AKA nonce
 	AUTN      []byte // decoded AUTN from the AKA nonce
+	// Proxy marks a 407 Proxy-Authenticate challenge, answered with
+	// Proxy-Authorization (RFC 3261 22.3).
+	Proxy bool
+
+	nonceCount atomic.Uint32 // nc for this nonce (RFC 2617 3.2.2)
 }
 
 // ParseDigestChallenge parses a WWW-Authenticate header value.
@@ -207,7 +213,8 @@ func ProcessAKAChallengeWithResult(challenge *DigestChallenge, aka AKAProvider, 
 }
 
 func buildDigestAuthorization(challenge *DigestChallenge, username, method, uri string, password, auts []byte) (string, error) {
-	nc := "00000001"
+	// Every request answering this nonce carries the next nc.
+	nc := fmt.Sprintf("%08x", challenge.nonceCount.Add(1))
 	cnonce := randomDigestCNonce()
 	qop := normalizeDigestQOP(challenge.QOP)
 	response, err := ComputeAKAv1MD5DigestResponse(

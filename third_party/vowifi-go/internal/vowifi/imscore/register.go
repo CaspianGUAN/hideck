@@ -731,10 +731,11 @@ func (s *Service) buildRegisterRequest(
 		b.WriteString("Route: " + route + "\r\n")
 	}
 	if !options.anonymous {
+		headerName := registerAuthorizationHeaderName(session, authHeader)
 		if authHeader == "" {
 			authHeader = initialIMSAuthorization(cfg)
 		}
-		b.WriteString("Authorization: " + authHeader + "\r\n")
+		b.WriteString(headerName + ": " + authHeader + "\r\n")
 	}
 	if strings.TrimSpace(cfg.UserAgent) != "" {
 		b.WriteString("User-Agent: " + strings.TrimSpace(cfg.UserAgent) + "\r\n")
@@ -1286,7 +1287,12 @@ func (s *Service) extractChallenge(resp *sipResponse, statusCode int) (*DigestCh
 		}
 		return nil, errors.New("imscore: challenge response missing " + header)
 	}
-	return ParseDigestChallenge(value)
+	challenge, err := ParseDigestChallenge(value)
+	if err != nil {
+		return nil, err
+	}
+	challenge.Proxy = header == "Proxy-Authenticate"
+	return challenge, nil
 }
 
 // buildAuthorization computes the Authorization header for the session.
@@ -1439,4 +1445,14 @@ func transportUpper(t string) string {
 // formatHostPort formats an IP:port for SIP.
 func formatHostPort(ip interface{ String() string }) string {
 	return ip.String()
+}
+
+// registerAuthorizationHeaderName answers a 407 Proxy-Authenticate challenge
+// with Proxy-Authorization (RFC 3261 22.3); 401 challenges and the initial
+// unauthenticated REGISTER (empty authHeader) keep Authorization.
+func registerAuthorizationHeaderName(session *registerSession, authHeader string) string {
+	if session != nil && session.challenge != nil && session.challenge.Proxy && authHeader != "" {
+		return "Proxy-Authorization"
+	}
+	return "Authorization"
 }
