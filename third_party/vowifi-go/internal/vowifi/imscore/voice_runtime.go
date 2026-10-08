@@ -51,6 +51,7 @@ type InboundVoiceRequest struct {
 	ReferTo          string
 	ReferSub         string
 	Supported        string
+	Require          string
 	MinSE            string
 	Replaces         string
 	HistoryInfo      string
@@ -68,6 +69,8 @@ type InboundVoiceResponse struct {
 	SessionExpires string
 	AlertInfo      string
 	Reason         string
+	Require        string
+	RSeq           string
 }
 
 // InboundVoiceResponder retains the network transaction used by an inbound

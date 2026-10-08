@@ -18,8 +18,11 @@ import (
 )
 
 const (
-	maxAKAChallenges          = 3
-	registerFeatureCapsHeader = `*;+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip`
+	maxAKAChallenges           = 3
+	registerFeatureCapsHeader  = `*;+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip`
+	aisTH52003PresetID         = "ais_th_52003"
+	aisRegisterICSIRef         = "urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel"
+	aisRegisterSupportedHeader = "100rel,path,replaces"
 )
 
 // registerSession tracks one registration attempt.
@@ -130,6 +133,20 @@ func (s *Service) registerLocked(ctx context.Context) error {
 				"device", s.DeviceID(), "err", againErr,
 				"binding_required", s.outboundBindingRequired())
 			err = againErr
+		}
+	}
+	// The P-CSCF still holds the SA for this inner IP and port-c/port-s. Keeping
+	// that binding leaves port-s down, so the SMS receiver stays not ready.
+	// Drop the SA and register once on new ports.
+	if akaIPPortConflict(err) {
+		logging.WarnRate("ims-aka-ip-port-conflict-"+s.DeviceID(), 30*time.Second,
+			"IMS REGISTER AKA IP+Port conflict; replacing security association",
+			"device", s.DeviceID(), "err", err)
+		if resetErr := s.resetRegistrationForPCSCFSwitch(); resetErr != nil {
+			err = errors.Join(err, resetErr)
+		} else {
+			hadBinding = false
+			expires, err = s.runRegisterFlow(ctx)
 		}
 	}
 	if err != nil {
@@ -520,6 +537,7 @@ func (s *Service) exchangeRegister(ctx context.Context, session *registerSession
 		"authenticated", strings.TrimSpace(authorization) != "",
 		"security_client_mechanisms", securityClientMechanismCount(rawSIPHeaderValue(request, "Security-Client")),
 		"sip", logging.RedactSIPRaw(request))
+	s.logRegisterOutbound(request)
 	s.logRegisterViaPorts(session, request)
 	response, err := s.transport.RoundTrip(ctx, request)
 	if err != nil {
@@ -746,12 +764,25 @@ func (s *Service) buildRegisterRequest(
 }
 
 func (s *Service) registerContactOptions(session *registerSession) imsheaders.ContactOptions {
+	contactOrder := s.cfg.RegisterTemplate.ContactOrder
+	icsiRef := s.cfg.RegisterTemplate.ICSIRef
+	if s.cfg.CarrierPresetID == aisTH52003PresetID {
+		// AIS 520/003 REGISTER Contact as an iPhone (iOS 16.2) sends it: one
+		// MMTel ICSI, the SRVCC tags, +g.3gpp.smsip and +sip.instance, no
+		// audio. Without the SRVCC tags AIS answers every MT call with
+		// "Media Negotiation Failed" (captured 2026-10-08). Dialog requests
+		// keep the carrier template.
+		contactOrder = []string{
+			"icsi_ref", "mid_call", "ps2cs_srvcc_orig_pre_alerting", "smsip", "srvcc_alerting", "sip_instance",
+		}
+		icsiRef = aisRegisterICSIRef
+	}
 	options := imsheaders.ContactOptions{
 		ContactID: session.contactUser, LocalAddr: s.cfg.LocalIP.String(),
 		LocalPortC: s.cfg.LocalPort, LocalPortS: s.cfg.LocalPort,
 		AccessType:        registerConfiguredAccessType(s.cfg),
-		ContactParamOrder: s.cfg.RegisterTemplate.ContactOrder,
-		SIPInstance:       s.cfg.IMEI, IcsiRef: s.cfg.RegisterTemplate.ICSIRef,
+		ContactParamOrder: contactOrder,
+		SIPInstance:       s.cfg.IMEI, IcsiRef: icsiRef,
 		IMEI: s.cfg.DeviceID,
 	}
 	if strings.TrimSpace(options.ContactID) == "" {
@@ -996,6 +1027,10 @@ func registerSupportedHeader(cfg *IMSConfig) string {
 }
 
 func registerSupportedHeaderForSession(cfg *IMSConfig, session *registerSession) string {
+	if cfg != nil && cfg.CarrierPresetID == aisTH52003PresetID {
+		// The iPhone REGISTER to AIS lists exactly these.
+		return aisRegisterSupportedHeader
+	}
 	supported := registerSupportedHeader(cfg)
 	if session != nil {
 		if session.template.ID == "" && session.template.SecAgreeMode == "" &&
@@ -1071,6 +1106,47 @@ func (s *Service) registerLocalAddress(session *registerSession, transport strin
 		port = protectedViaSentByPort(transport, int(session.security.client.PortS), s.cfg.LocalPort)
 	}
 	return net.JoinHostPort(s.cfg.LocalIP.String(), strconv.Itoa(port))
+}
+
+func (s *Service) logRegisterOutbound(request string) {
+	if s == nil {
+		return
+	}
+	contact := rawSIPHeaderValue(request, "Contact")
+	logging.Info("IMS REGISTER outbound",
+		"device", s.DeviceID(),
+		"contact_has_accesstype", registerContactHasParam(contact, "+g.3gpp.accesstype"),
+		"contact_has_smsip", registerContactHasParam(contact, "+g.3gpp.smsip"),
+		"contact_has_instance", registerContactHasParam(contact, "+sip.instance"),
+		"contact_icsi", registerContactICSIKind(contact),
+		"contact_has_mid_call", registerContactHasParam(contact, "+g.3gpp.mid-call"),
+		"contact_has_srvcc", strings.Contains(strings.ToLower(contact), "srvcc"),
+		"feature_caps_present", strings.TrimSpace(rawSIPHeaderValue(request, "Feature-Caps")) != "")
+}
+
+func registerContactHasParam(contact, name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	for _, part := range strings.Split(contact, ";") {
+		param, _, _ := strings.Cut(strings.TrimSpace(part), "=")
+		if strings.EqualFold(param, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func registerContactICSIKind(contact string) string {
+	lower := strings.ToLower(contact)
+	if !strings.Contains(lower, "icsi") {
+		return "absent"
+	}
+	if strings.Contains(lower, "cpm.") || strings.Contains(lower, "icsi.sms") || strings.Count(lower, "icsi.") > 1 {
+		return "multi"
+	}
+	if strings.Contains(lower, "icsi.mmtel") {
+		return "mmtel"
+	}
+	return "other"
 }
 
 func (s *Service) logRegisterViaPorts(session *registerSession, request string) {
@@ -1169,6 +1245,10 @@ type registerResponseError struct {
 }
 
 func (e *registerResponseError) Error() string { return e.message }
+
+func akaIPPortConflict(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "aka ip+port conflict")
+}
 
 func registrationResponseError(response *sipResponse, challenged bool) error {
 	phase := "initial REGISTER"

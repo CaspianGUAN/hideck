@@ -444,6 +444,60 @@ func TestRegisterContactUsesRecoveredCarrierTemplate(t *testing.T) {
 	}
 }
 
+func TestBuildRegisterAIS52003ContactIsSingleMMTel(t *testing.T) {
+	const multiICSI = "urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel," +
+		"urn%3Aurn-7%3A3gpp-service.ims.icsi.sms," +
+		"urn%3Aurn-7%3A3gpp-service.ims.icsi.oma.cpm.msg," +
+		"urn%3Aurn-7%3A3gpp-service.ims.icsi.oma.cpm.sms"
+	template := IMSRegisterTemplate{
+		AccessType: "wlan1", ICSIRef: multiICSI,
+		ContactOrder: []string{
+			"access_type", "sip_instance", "audio", "smsip", "smsip_msisdn_less", "icsi_ref",
+			"mid_call", "srvcc_alerting", "ps2cs_srvcc_orig_pre_alerting",
+		},
+	}
+	config := &IMSConfig{
+		CarrierPresetID: aisTH52003PresetID,
+		IMEI:            "356714117697975", IMSI: "520030393351967",
+		IMPI:    "520030393351967@ims.mnc003.mcc520.3gppnetwork.org",
+		IMPU:    "sip:520030393351967@ims.mnc003.mcc520.3gppnetwork.org",
+		Domain:  "ims.mnc003.mcc520.3gppnetwork.org",
+		LocalIP: net.IPv4(192, 0, 2, 10), LocalPort: 5060, Transport: "tcp",
+		RegisterTemplate: template,
+	}
+	service := &Service{cfg: config}
+	request := service.buildRegister(&registerSession{callID: "call-1", fromTag: "tag-1", cseq: 1}, "")
+	contact := sipHeaderValue(request, "Contact")
+	want := `<sip:520030393351967@192.0.2.10:5060;transport=tcp>` +
+		`;+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel"` +
+		`;+g.3gpp.mid-call;+g.3gpp.ps2cs-srvcc-orig-pre-alerting;+g.3gpp.smsip;+g.3gpp.srvcc-alerting` +
+		`;+sip.instance="<urn:gsma:imei:35671411-769797-5>"`
+	if contact != want {
+		t.Fatalf("REGISTER Contact = %q\nwant             = %q", contact, want)
+	}
+	if got := sipHeaderValue(request, "Supported"); got != "100rel, path, replaces" {
+		t.Fatalf("AIS REGISTER Supported = %q", got)
+	}
+	for _, absent := range []string{"accesstype", "smsip-msisdn-less", ";audio", "reg-id", "cpm"} {
+		if strings.Contains(strings.ToLower(contact), absent) {
+			t.Fatalf("REGISTER Contact still has %s: %q", absent, contact)
+		}
+	}
+	if got := sipHeaderValue(request, "Feature-Caps"); got != registerFeatureCapsHeader {
+		t.Fatalf("Feature-Caps = %q", got)
+	}
+	other := &Service{cfg: &IMSConfig{
+		CarrierPresetID: "ais_th_52001", IMEI: config.IMEI, IMSI: config.IMSI,
+		IMPI: config.IMPI, IMPU: config.IMPU, Domain: config.Domain,
+		LocalIP: config.LocalIP, LocalPort: config.LocalPort, Transport: config.Transport,
+		RegisterTemplate: template,
+	}}
+	kept := sipHeaderValue(other.buildRegister(&registerSession{callID: "call-2", fromTag: "tag-2", cseq: 1}, ""), "Contact")
+	if !strings.Contains(kept, `+g.3gpp.accesstype="wlan1"`) || !strings.Contains(kept, "cpm.sms") {
+		t.Fatalf("non-AIS REGISTER Contact = %q", kept)
+	}
+}
+
 func TestBuildRegisterUsesRecoveredTemplateHeaders(t *testing.T) {
 	const allow = "OPTIONS, REGISTER, SUBSCRIBE, NOTIFY, PUBLISH, INVITE, ACK, BYE, CANCEL, UPDATE, PRACK, REFER, INFO, MESSAGE"
 	config := &IMSConfig{

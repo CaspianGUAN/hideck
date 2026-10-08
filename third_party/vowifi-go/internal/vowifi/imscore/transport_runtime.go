@@ -211,6 +211,18 @@ func (s *Service) logInboundSIPRequest(request *sip.Request) {
 		"content_type", sipkit.FirstHeaderValue(request, "Content-Type", true),
 		"body_bytes", len(request.Body()),
 	}
+	switch request.Method {
+	case sip.INVITE, sip.PRACK, sip.ACK, sip.BYE, sip.CANCEL, sip.UPDATE:
+		// Call signaling is rare and decides whether a call survives; keep it
+		// visible without the SMS trace switch.
+		fields = append(fields,
+			"request_uri", request.Recipient.String(),
+			"call_id", sipkit.FirstHeaderValue(request, "Call-ID", true),
+			"rack", sipkit.FirstHeaderValue(request, "RAck", true),
+			"reason", sipkit.FirstHeaderValue(request, "Reason", true))
+		logging.Info("IMS inbound SIP request", fields...)
+		return
+	}
 	if s.smsProtocolTraceEnabled() {
 		logging.Info("IMS inbound SIP request", fields...)
 		return
