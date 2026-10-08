@@ -206,14 +206,24 @@ func (c *Client) serveOutbound(request *sip.Request, dialog *sipgo.DialogServerS
 	}
 	defer c.untrack(b)
 	logger.Info("SIP 呼出已转到手机", "call_id", b.callID, "device_id", deviceID, "callee", callee)
-	answered := false
+	answered, earlyMedia := false, false
 	for {
 		select {
 		case event := <-b.events:
 			switch event.Type {
 			case "call_ringing":
+				// A 180 after early media means the network stopped sending
+				// ringback (AIS sends 183 with a short tone, then 180). The PBX
+				// plays its own ringback on 180.
 				if !answered {
 					_ = dialog.Respond(sip.StatusRinging, "Ringing", nil)
+				}
+			case "call_early_media":
+				if !answered && !earlyMedia {
+					// Let the PBX play the network's ringback or announcement.
+					earlyMedia = true
+					_ = dialog.Respond(sip.StatusSessionInProgress, "Session Progress", []byte(answer),
+						sip.NewHeader("Content-Type", "application/sdp"))
 				}
 			case "call_answered":
 				if !answered {

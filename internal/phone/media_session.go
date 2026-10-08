@@ -21,27 +21,34 @@ type mediaSessionOptions struct {
 }
 
 type MediaSession struct {
-	ID, Lease, Owner string
-	peer             *webrtc.PeerConnection
-	track            *webrtc.TrackLocalStaticRTP
-	rtpConn          *net.UDPConn
-	onState          func(string, webrtc.PeerConnectionState)
-	realtimeCodecs   []string
-	newRealtimeCodec RealtimeCodecFactory
-	mu               sync.RWMutex
-	remote           rtpEndpoint
-	realtimeCodec    RealtimeCodec
-	recorder         *mixedRecorder
-	attached         bool
-	closed           chan struct{}
-	closeOnce        sync.Once
-	silentWorker     sync.WaitGroup
-	silentStarted    bool
-	receiveOnly      bool
-	external         *externalLeg
-	fromIMS          atomic.Uint64
-	toIMS            atomic.Uint64
-	lost             atomic.Uint64
+	ID, Lease, Owner     string
+	peer                 *webrtc.PeerConnection
+	track                *webrtc.TrackLocalStaticRTP
+	rtpConn              *net.UDPConn
+	onState              func(string, webrtc.PeerConnectionState)
+	realtimeCodecs       []string
+	newRealtimeCodec     RealtimeCodecFactory
+	mu                   sync.RWMutex
+	remote               rtpEndpoint
+	realtimeCodec        RealtimeCodec
+	recorder             *mixedRecorder
+	attached             bool
+	attachedSDP          string
+	closed               chan struct{}
+	closeOnce            sync.Once
+	silentWorker         sync.WaitGroup
+	silentStarted        bool
+	externalQuietStarted bool
+	uplinkStop           chan struct{}
+	downlinkStop         chan struct{}
+	receiveOnly          bool
+	external             *externalLeg
+	uplinkMu             sync.Mutex
+	uplinkSequence       uint16
+	uplinkTimestamp      uint32
+	fromIMS              atomic.Uint64
+	toIMS                atomic.Uint64
+	lost                 atomic.Uint64
 }
 
 func newMediaSession(ctx context.Context, options mediaSessionOptions) (*MediaSession, string, error) {
@@ -124,8 +131,14 @@ func (s *MediaSession) PlainSDP() string {
 }
 
 func (s *MediaSession) Attach(remoteSDP string) error {
-	supported := append([]string{"PCMU", "PCMA"}, s.realtimeCodecs...)
-	endpoint, err := parseRTPEndpoint(remoteSDP, supported...)
+	s.mu.RLock()
+	same := s.attached && s.attachedSDP == remoteSDP
+	s.mu.RUnlock()
+	if same {
+		// Early media already attached this SDP; keep the running relay.
+		return nil
+	}
+	endpoint, err := parseRTPEndpoint(remoteSDP, s.attachableCodecs()...)
 	if err != nil {
 		return err
 	}
@@ -136,7 +149,7 @@ func (s *MediaSession) Attach(remoteSDP string) error {
 	s.mu.Lock()
 	previous := s.realtimeCodec
 	s.realtimeCodec = codec
-	s.remote, s.attached = endpoint, true
+	s.remote, s.attached, s.attachedSDP = endpoint, true, remoteSDP
 	s.mu.Unlock()
 	var closeErr error
 	if previous != nil {
@@ -146,7 +159,25 @@ func (s *MediaSession) Attach(remoteSDP string) error {
 	if primeErr == nil && s.receiveOnly {
 		s.startSilentRTP()
 	}
+	if primeErr == nil && s.external != nil {
+		// A PBX leg does not keep a microphone stream the way the browser
+		// does. Keep both directions alive until real audio replaces them.
+		s.startPBXBridgeKeepalive()
+	}
 	return errors.Join(closeErr, primeErr)
+}
+
+func (s *MediaSession) attachableCodecs() []string {
+	supported := []string{"PCMU", "PCMA"}
+	if len(s.realtimeCodecs) > 0 {
+		return append(supported, s.realtimeCodecs...)
+	}
+	if s.external != nil && s.newRealtimeCodec != nil {
+		// The PBX offer stays G.711. An inbound IMS offer leads with AMR, so
+		// answer that codec and transcode each 20ms frame for Asterisk.
+		return append(supported, "AMR", "AMR-WB")
+	}
+	return supported
 }
 
 func (s *MediaSession) createRealtimeCodec(endpoint rtpEndpoint) (RealtimeCodec, error) {
@@ -219,12 +250,60 @@ func (s *MediaSession) startSilentRTP() {
 		return
 	}
 	s.silentStarted = true
+	if s.uplinkStop == nil {
+		s.uplinkStop = make(chan struct{})
+	}
 	s.silentWorker.Add(1)
 	s.mu.Unlock()
 	go func() {
 		defer s.silentWorker.Done()
 		s.forwardSilentRTP()
 	}()
+}
+
+func (s *MediaSession) startPBXBridgeKeepalive() {
+	s.startSilentRTP()
+	s.mu.Lock()
+	if s.externalQuietStarted || sessionClosed(s.closed) {
+		s.mu.Unlock()
+		return
+	}
+	s.externalQuietStarted = true
+	if s.downlinkStop == nil {
+		s.downlinkStop = make(chan struct{})
+	}
+	s.silentWorker.Add(1)
+	s.mu.Unlock()
+	go func() {
+		defer s.silentWorker.Done()
+		s.forwardExternalSilence()
+	}()
+}
+
+func (s *MediaSession) stopIMSSilence() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.uplinkStop == nil {
+		return
+	}
+	select {
+	case <-s.uplinkStop:
+	default:
+		close(s.uplinkStop)
+	}
+}
+
+func (s *MediaSession) stopExternalSilence() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.downlinkStop == nil {
+		return
+	}
+	select {
+	case <-s.downlinkStop:
+	default:
+		close(s.downlinkStop)
+	}
 }
 
 func (s *MediaSession) stopSilentRTP() {

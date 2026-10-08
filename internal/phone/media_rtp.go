@@ -1,12 +1,13 @@
 package phone
 
 import (
+	"bytes"
 	"errors"
 	"time"
 
-	"github.com/yibaiba/hideck/pkg/logger"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
+	"github.com/yibaiba/hideck/pkg/logger"
 )
 
 const (
@@ -15,6 +16,7 @@ const (
 	browserClockRate       = 8000
 	audioFramesPerSecond   = 50
 	browserSamplesPerFrame = browserClockRate / audioFramesPerSecond
+	silentRTPSSRC          = 0x564f4849
 )
 
 func (s *MediaSession) forwardBrowserRTP(track *webrtc.TrackRemote) {
@@ -42,12 +44,16 @@ func (s *MediaSession) forwardBrowserPacket(packet *rtp.Packet) {
 	packet.Payload = payload
 	packet.PayloadType = endpoint.PayloadType
 	packet.Timestamp = scaleTimestamp(packet.Timestamp, browserClockRate, endpoint.ClockRate)
+	s.stampExternalUplink(&packet.Header, endpoint.ClockRate)
 	raw, err := packet.Marshal()
 	if err != nil {
 		return
 	}
 	if _, err := s.rtpConn.WriteToUDP(raw, endpoint.Address); err == nil {
 		s.toIMS.Add(1)
+		if s.external != nil {
+			s.stopIMSSilence()
+		}
 	}
 }
 
@@ -118,6 +124,10 @@ func (s *MediaSession) writeBrowserRTP(packet *rtp.Packet) {
 	if s.external != nil {
 		if s.external.write(packet) == nil {
 			s.fromIMS.Add(1)
+			s.stopExternalSilence()
+			if s.fromIMS.Load() == 1 {
+				logger.Info("IMS 语音已转到 PBX", "media_id", s.ID, "codec", endpoint.Codec)
+			}
 		}
 		return
 	}
@@ -170,6 +180,9 @@ func (s *MediaSession) primeRelay() error {
 }
 
 func (s *MediaSession) forwardSilentRTP() {
+	s.mu.RLock()
+	stop := s.uplinkStop
+	s.mu.RUnlock()
 	ticker := time.NewTicker(jitterTick)
 	defer ticker.Stop()
 	sequence := uint16(1)
@@ -180,6 +193,10 @@ func (s *MediaSession) forwardSilentRTP() {
 	timestamp := uint32(endpoint.ClockRate / audioFramesPerSecond)
 	for {
 		select {
+		case <-stop:
+			return
+		case <-s.closed:
+			return
 		case <-ticker.C:
 			endpoint, _, ok = s.endpoint()
 			if !ok {
@@ -192,8 +209,28 @@ func (s *MediaSession) forwardSilentRTP() {
 				s.reportSilentRTPFailure(err)
 				return
 			}
+		}
+	}
+}
+
+func (s *MediaSession) forwardExternalSilence() {
+	s.mu.RLock()
+	stop := s.downlinkStop
+	s.mu.RUnlock()
+	ticker := time.NewTicker(jitterTick)
+	defer ticker.Stop()
+	silence := bytes.Repeat([]byte{0xff}, browserSamplesPerFrame)
+	for {
+		select {
+		case <-stop:
+			return
 		case <-s.closed:
 			return
+		case <-ticker.C:
+			if s.external == nil {
+				return
+			}
+			_ = s.external.write(&rtp.Packet{Payload: append([]byte(nil), silence...)})
 		}
 	}
 }
@@ -221,8 +258,9 @@ func (s *MediaSession) writeSilentRTP(sequence uint16, timestamp uint32) error {
 	}
 	packet := &rtp.Packet{Header: rtp.Header{
 		Version: 2, PayloadType: endpoint.PayloadType, SequenceNumber: sequence,
-		Timestamp: timestamp, SSRC: 0x564f4849,
+		Timestamp: timestamp, SSRC: silentRTPSSRC,
 	}, Payload: payload}
+	s.stampExternalUplink(&packet.Header, endpoint.ClockRate)
 	raw, err := packet.Marshal()
 	if err != nil {
 		return err
@@ -232,6 +270,24 @@ func (s *MediaSession) writeSilentRTP(sequence uint16, timestamp uint32) error {
 		s.toIMS.Add(1)
 	}
 	return err
+}
+
+// stampExternalUplink gives every packet a PBX leg sends to IMS one SSRC and
+// continuous sequence numbers and timestamps. The leg starts with keepalive
+// silence and switches to the PBX's own RTP stream; AIS's media gateway locks
+// onto the first SSRC and drops the PBX stream that follows, so the far end
+// heard nothing (MT call, 2026-10-08). The browser leg keeps its stream.
+func (s *MediaSession) stampExternalUplink(header *rtp.Header, clockRate int) {
+	if s.external == nil || header == nil {
+		return
+	}
+	s.uplinkMu.Lock()
+	defer s.uplinkMu.Unlock()
+	s.uplinkSequence++
+	s.uplinkTimestamp += uint32(clockRate / audioFramesPerSecond)
+	header.SSRC = silentRTPSSRC
+	header.SequenceNumber = s.uplinkSequence
+	header.Timestamp = s.uplinkTimestamp
 }
 
 func browserPayloadForIMS(payload []byte, endpoint rtpEndpoint, codec RealtimeCodec) ([]byte, error) {

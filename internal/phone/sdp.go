@@ -23,6 +23,10 @@ type rtpEndpoint struct {
 	PayloadType uint8
 	ClockRate   int
 	Fmtp        string
+	// DTMFPayloadType and DTMFClockRate are the peer's telephone-event at the
+	// audio codec's clock rate (else 8000), or 0 when the peer offered none.
+	DTMFPayloadType uint8
+	DTMFClockRate   int
 }
 
 type rtpCodec struct {
@@ -41,7 +45,7 @@ type endpointSelection struct {
 
 func plainAudioSDP(port int, realtimeCodecs []string) string {
 	payloads, attributes := advertisedAudioCodecs(realtimeCodecs)
-	return renderPlainAudioSDP(port, payloads, attributes)
+	return renderPlainAudioSDP(port, payloads, attributes, dtmfPayloadType, 8000)
 }
 
 func plainSelectedAudioSDP(port int, endpoint rtpEndpoint) string {
@@ -51,13 +55,33 @@ func plainSelectedAudioSDP(port int, endpoint rtpEndpoint) string {
 	if endpoint.Fmtp != "" {
 		attributes = append(attributes, "a=fmtp:"+payload+" "+endpoint.Fmtp)
 	}
-	return renderPlainAudioSDP(port, []string{payload, strconv.Itoa(dtmfPayloadType)}, attributes)
+	dtmf, dtmfClock := selectedDTMF(endpoint)
+	return renderPlainAudioSDP(port, []string{payload, strconv.Itoa(dtmf)}, attributes, dtmf, dtmfClock)
 }
 
-func renderPlainAudioSDP(port int, payloads, attributes []string) string {
+// selectedDTMF answers telephone-event with the peer's own payload type and
+// clock rate. AIS offers AMR-WB as 101 with telephone-event/16000, the form
+// the calling handset uses; a fixed 101/8000 collides with the codec or needs
+// a transcoder, and AIS hangs up with "Media Negotiation Failed".
+func selectedDTMF(endpoint rtpEndpoint) (int, int) {
+	if endpoint.DTMFPayloadType != 0 && endpoint.DTMFPayloadType != endpoint.PayloadType {
+		return int(endpoint.DTMFPayloadType), endpoint.DTMFClockRate
+	}
+	if int(endpoint.PayloadType) != dtmfPayloadType {
+		return dtmfPayloadType, 8000
+	}
+	for payload := 96; payload <= 127; payload++ {
+		if payload != int(endpoint.PayloadType) {
+			return payload, 8000
+		}
+	}
+	return dtmfPayloadType, 8000
+}
+
+func renderPlainAudioSDP(port int, payloads, attributes []string, dtmf, dtmfClock int) string {
 	return fmt.Sprintf(
-		"v=0\r\no=hideck 0 0 IN IP4 127.0.0.1\r\ns=HiDeck Phone\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio %d RTP/AVP %s\r\n%s\r\na=rtpmap:%d telephone-event/8000\r\na=fmtp:%d 0-15\r\na=ptime:20\r\na=sendrecv\r\n",
-		port, strings.Join(payloads, " "), strings.Join(attributes, "\r\n"), dtmfPayloadType, dtmfPayloadType,
+		"v=0\r\no=hideck 0 0 IN IP4 127.0.0.1\r\ns=HiDeck Phone\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio %d RTP/AVP %s\r\n%s\r\na=rtpmap:%d telephone-event/%d\r\na=fmtp:%d 0-15\r\na=ptime:20\r\na=sendrecv\r\n",
+		port, strings.Join(payloads, " "), strings.Join(attributes, "\r\n"), dtmf, dtmfClock, dtmf,
 	)
 }
 
@@ -123,10 +147,23 @@ func parseRTPEndpoint(raw string, supported ...string) (rtpEndpoint, error) {
 	if host == "" || port <= 0 {
 		return rtpEndpoint{}, errors.New("phone: SDP has no usable RTP endpoint")
 	}
-	return selectRTPEndpoint(endpointSelection{
+	endpoint, err := selectRTPEndpoint(endpointSelection{
 		host: host, port: port, payloadTypes: payloadTypes,
 		codecs: codecs, fmtps: fmtps, supported: supported,
 	})
+	if err != nil {
+		return endpoint, err
+	}
+	for _, clockRate := range []int{endpoint.ClockRate, 8000} {
+		for _, payloadType := range payloadTypes {
+			codec := codecs[payloadType]
+			if codec.name == "TELEPHONE-EVENT" && codec.clockRate == clockRate && payloadType > 0 && payloadType < 128 {
+				endpoint.DTMFPayloadType, endpoint.DTMFClockRate = uint8(payloadType), clockRate
+				return endpoint, nil
+			}
+		}
+	}
+	return endpoint, nil
 }
 
 func appendPayloadTypes(destination []int, fields []string) []int {

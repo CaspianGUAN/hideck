@@ -108,3 +108,44 @@ func TestParseRTPEndpointSkipsDisabledEVSForAMRWB(t *testing.T) {
 		t.Fatalf("endpoint = %+v, want AMR-WB PT 116", endpoint)
 	}
 }
+
+func TestSelectedAnswerDTMFAvoidsOfferedAudioPayloadType(t *testing.T) {
+	// AIS MT offer: AMR-WB is 101; telephone-event/16000 is 96, /8000 is 97.
+	offer := "v=0\r\nc=IN IP6 2405:9800:9700:2080::5\r\nm=audio 21074 RTP/AVP 101 108 8 0 96 97\r\n" +
+		"a=rtpmap:101 AMR-WB/16000\r\na=fmtp:101 mode-set=0,1,2\r\na=rtpmap:108 AMR/8000\r\n" +
+		"a=rtpmap:8 PCMA/8000\r\na=rtpmap:0 PCMU/8000\r\n" +
+		"a=rtpmap:96 telephone-event/16000\r\na=rtpmap:97 telephone-event/8000\r\n"
+	endpoint, err := parseRTPEndpoint(offer, "AMR-WB")
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer := plainSelectedAudioSDP(4000, endpoint)
+	if !strings.Contains(answer, "m=audio 4000 RTP/AVP 101 96\r\n") ||
+		!strings.Contains(answer, "a=rtpmap:96 telephone-event/16000") {
+		t.Fatalf("answer = %q", answer)
+	}
+
+	noDTMF := strings.ReplaceAll(strings.ReplaceAll(offer, " 96 97", ""),
+		"a=rtpmap:96 telephone-event/16000\r\na=rtpmap:97 telephone-event/8000\r\n", "")
+	endpoint, err = parseRTPEndpoint(noDTMF, "AMR-WB")
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer = plainSelectedAudioSDP(4000, endpoint)
+	if strings.Contains(answer, "a=rtpmap:101 telephone-event") || !strings.Contains(answer, "RTP/AVP 101 96\r\n") {
+		t.Fatalf("answer without offered DTMF = %q", answer)
+	}
+}
+
+func TestSelectedAnswerDTMFUses8000ForG711(t *testing.T) {
+	offer := "v=0\r\nc=IN IP4 127.0.0.1\r\nm=audio 4000 RTP/AVP 8 116 96\r\n" +
+		"a=rtpmap:8 PCMA/8000\r\na=rtpmap:116 telephone-event/16000\r\na=rtpmap:96 telephone-event/8000\r\n"
+	endpoint, err := parseRTPEndpoint(offer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer := plainSelectedAudioSDP(4000, endpoint)
+	if !strings.Contains(answer, "RTP/AVP 8 96\r\n") || !strings.Contains(answer, "a=rtpmap:96 telephone-event/8000") {
+		t.Fatalf("answer = %q", answer)
+	}
+}

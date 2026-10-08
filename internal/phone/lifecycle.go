@@ -361,11 +361,38 @@ func callDurationSeconds(record CallRecord, endedAt time.Time) int64 {
 func (s *Service) publishMediaUpdate(event voicehost.CallEvent) {
 	s.mu.Lock()
 	call := s.calls[event.CallID]
+	early := false
+	var mediaID, deviceID string
 	if call != nil && !call.terminal {
 		call.view.Held = event.Held
+		early = call.view.Direction == "outbound" && call.view.AnsweredAt == nil
+		mediaID, deviceID = call.mediaID, call.view.DeviceID
 	}
 	s.mu.Unlock()
-	if call != nil && !call.terminal {
-		s.publish("media_updated", call)
+	if call == nil || call.terminal {
+		return
 	}
+	if early && s.attachEarlyOutboundMedia(deviceID, mediaID) {
+		s.publish("call_early_media", call)
+	}
+	s.publish("media_updated", call)
+}
+
+// attachEarlyOutboundMedia bridges a PBX leg on early media (183 with SDP).
+// AIS stops sending RTP after about a second when nothing comes back, and
+// the ringback or announcement would otherwise be lost before the answer.
+func (s *Service) attachEarlyOutboundMedia(deviceID, mediaID string) bool {
+	media := s.media.Get(mediaID)
+	if media == nil || media.external == nil {
+		return false
+	}
+	snapshot := s.gateway.ActiveCall(deviceID)
+	if snapshot == nil || snapshot.ClientSDP == "" {
+		return false
+	}
+	if err := media.Attach(snapshot.ClientSDP); err != nil {
+		logger.Warn("早期媒体桥接失败", "media_id", mediaID, "err", err)
+		return false
+	}
+	return true
 }

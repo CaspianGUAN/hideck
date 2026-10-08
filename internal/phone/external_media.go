@@ -79,6 +79,10 @@ func newExternalMediaSession(id, lease string, options ExternalMediaOptions, man
 	}
 	session := &MediaSession{
 		ID: id, Lease: lease, Owner: options.Owner, rtpConn: imsConn, external: leg,
+		// AMR-WB/AMR lead the IMS offer. A G.711-only offer forces the
+		// network to transcode toward a VoLTE handset; AIS does not, so a call
+		// to a Thai mobile drops after a second with "no media" while IVRs
+		// that speak G.711 still work. HiDeck transcodes AMR for the PBX.
 		realtimeCodecs:   append([]string(nil), manager.realtimeCodecs...),
 		newRealtimeCodec: manager.newRealtimeCodec, closed: make(chan struct{}),
 	}

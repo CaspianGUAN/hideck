@@ -93,6 +93,11 @@ func (s *Service) Answer(ctx context.Context, request ControlRequest) (CallView,
 		})
 		return CallView{}, errors.Join(err, rejectErr)
 	}
+	if endpoint, _, ok := media.endpoint(); ok && endpoint.Codec != "" {
+		s.mu.Lock()
+		call.view.Codec, call.record.Codec = endpoint.Codec, endpoint.Codec
+		s.mu.Unlock()
+	}
 	_, err = s.gateway.AnswerIncomingCall(ctx, voicehost.AnswerRequest{
 		DeviceID: deviceID, CallID: callID, SDP: media.PlainSDP(),
 	})
