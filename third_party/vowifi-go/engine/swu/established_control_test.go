@@ -675,3 +675,191 @@ func TestChildSARekeyRetriesWithPFSAfterNoProposalChosen(t *testing.T) {
 		t.Fatalf("remote SPI = %08x", session.espRemoteSPI)
 	}
 }
+
+func TestPeerIKESARekeySelectsMatchingProposal(t *testing.T) {
+	session, transport := newEstablishedControlSession(t)
+	defer stopControlTestSession(session)
+	disableControlLoop(session)
+	peerDH, err := enginecrypto.NewDiffieHellman(session.dhGroup)
+	if err != nil || peerDH.GenerateKey() != nil {
+		t.Fatalf("peer DH: %v", err)
+	}
+	var peerSPI [8]byte
+	copy(peerSPI[:], []byte("peer-new"))
+	match := buildIKEProposalsForSession(session)[0]
+	match.SPI, match.SPISize = append([]byte(nil), peerSPI[:]...), 8
+	match.ProposalNum = 2
+	match.AddTransform(ikev2.TransformTypeDH, ikev2.MODP_1024_bit)
+	request := &ikev2.IKEPacket{
+		InitiatorSPI: session.spiI, ResponderSPI: session.spiR,
+		Version: 0x20, ExchangeType: ikev2.ExchangeCreateChildSA, MessageID: 15,
+		Payloads: []ikev2.Payload{
+			&ikev2.EncryptedPayloadSA{Proposals: []*ikev2.Proposal{unacceptableIKEProposal(), match}},
+			&ikev2.EncryptedPayloadNonce{Data: bytes.Repeat([]byte{0x73}, 32)},
+			&ikev2.EncryptedPayloadKE{DHGroupNum: session.dhGroup, KeyData: peerDH.PublicKeyBytes()},
+		},
+	}
+	if err := deliverPeerCreateChildSA(t, session, request); err != nil {
+		t.Fatalf("handle peer IKE rekey: %v", err)
+	}
+	if session.spiI != peerSPI || session.TerminalError() != nil {
+		t.Fatalf("SPIi=%x terminal=%v", session.spiI, session.TerminalError())
+	}
+	receiveFragmentPacket(t, transport.sentIKE)
+}
+
+func TestPeerChildSARekeySelectsMatchingProposal(t *testing.T) {
+	session, transport := newEstablishedControlSession(t)
+	defer stopControlTestSession(session)
+	disableControlLoop(session)
+	const peerSPI = uint32(0xb1c2d3e4)
+	currentTSi, currentTSr := session.currentChildSelectors()
+	match := buildESPProposalsForSession(session, peerSPI)[0]
+	match.ProposalNum = 2
+	oppositeESN := ikev2.AlgorithmType(1)
+	if session.espESN {
+		oppositeESN = 0
+	}
+	match.AddTransform(ikev2.TransformTypeESN, oppositeESN)
+	request := peerChildRekeyPacket(session, 11, []*ikev2.Proposal{
+		unacceptableESPProposal(0x01020304), match,
+	}, currentTSi, currentTSr, nil)
+	if err := deliverPeerCreateChildSA(t, session, request); err != nil {
+		t.Fatalf("handle peer CHILD_SA rekey: %v", err)
+	}
+	if session.espRemoteSPI != peerSPI || session.TerminalError() != nil {
+		t.Fatalf("remote SPI=%08x terminal=%v", session.espRemoteSPI, session.TerminalError())
+	}
+	if _, err := readPeerNotify(t, session, transport); err != nil {
+		t.Fatalf("peer CHILD_SA rekey response: %v", err)
+	}
+}
+
+func TestPeerChildSARekeyAdoptsIKEDHFromOffer(t *testing.T) {
+	session, transport := newEstablishedControlSession(t)
+	defer stopControlTestSession(session)
+	disableControlLoop(session)
+	if session.childDH != nil || session.dhGroup == 0 {
+		t.Fatalf("precondition: child DH %v, IKE group %d", session.childDH, session.dhGroup)
+	}
+	peerDH, err := enginecrypto.NewDiffieHellman(session.dhGroup)
+	if err != nil || peerDH.GenerateKey() != nil {
+		t.Fatalf("peer DH: %v", err)
+	}
+	const peerSPI = uint32(0xc1d2e3f4)
+	currentTSi, currentTSr := session.currentChildSelectors()
+	match := buildESPProposalsForSession(session, peerSPI)[0]
+	match.AddTransform(ikev2.TransformTypeDH, ikev2.AlgorithmType(session.dhGroup))
+	request := peerChildRekeyPacket(session, 12, []*ikev2.Proposal{
+		unacceptableESPProposal(0x01020304), match,
+	}, currentTSi, currentTSr, &ikev2.EncryptedPayloadKE{
+		DHGroupNum: session.dhGroup, KeyData: peerDH.PublicKeyBytes(),
+	})
+	if err := deliverPeerCreateChildSA(t, session, request); err != nil {
+		t.Fatalf("handle peer PFS rekey: %v", err)
+	}
+	if session.espRemoteSPI != peerSPI || childDHGroup(session.childDH) != session.dhGroup || session.TerminalError() != nil {
+		t.Fatalf("remote SPI=%08x child DH=%d terminal=%v", session.espRemoteSPI, childDHGroup(session.childDH), session.TerminalError())
+	}
+	if _, err := readPeerNotify(t, session, transport); err != nil {
+		t.Fatalf("peer PFS rekey response: %v", err)
+	}
+}
+
+func TestPeerCreateChildSARejectsUnknownProposalWithoutTeardown(t *testing.T) {
+	session, transport := newEstablishedControlSession(t)
+	defer stopControlTestSession(session)
+	disableControlLoop(session)
+	oldSPI := session.espRemoteSPI
+	request := &ikev2.IKEPacket{
+		InitiatorSPI: session.spiI, ResponderSPI: session.spiR,
+		Version: 0x20, ExchangeType: ikev2.ExchangeCreateChildSA, MessageID: 21,
+		Payloads: []ikev2.Payload{
+			&ikev2.EncryptedPayloadSA{Proposals: []*ikev2.Proposal{unacceptableESPProposal(0x01020304)}},
+			&ikev2.EncryptedPayloadNonce{Data: bytes.Repeat([]byte{0x11}, 32)},
+		},
+	}
+	if err := deliverPeerCreateChildSA(t, session, request); err != nil {
+		t.Fatalf("handle unknown proposal: %v", err)
+	}
+	if session.TerminalError() != nil || session.espRemoteSPI != oldSPI {
+		t.Fatalf("session torn down: remote SPI=%08x terminal=%v", session.espRemoteSPI, session.TerminalError())
+	}
+	notify, err := readPeerNotify(t, session, transport)
+	if err != nil || notify != ikev2.NO_PROPOSAL_CHOSEN {
+		t.Fatalf("notify=%d err=%v", notify, err)
+	}
+}
+
+func disableControlLoop(session *Session) {
+	session.controlMu.Lock()
+	session.controlRunning = false
+	session.controlMu.Unlock()
+}
+
+func deliverPeerCreateChildSA(t *testing.T, session *Session, request *ikev2.IKEPacket) error {
+	t.Helper()
+	raw, err := session.encryptAndWrap(request)
+	if err != nil {
+		t.Fatalf("encrypt peer CREATE_CHILD_SA: %v", err)
+	}
+	decoded, err := ikev2.DecodePacket(raw)
+	if err != nil {
+		t.Fatalf("decode peer CREATE_CHILD_SA: %v", err)
+	}
+	return session.handleIncomingCreateChildSAPacket(decoded)
+}
+
+func peerChildRekeyPacket(
+	session *Session,
+	messageID uint32,
+	proposals []*ikev2.Proposal,
+	currentTSi, currentTSr *ikev2.EncryptedPayloadTS,
+	ke *ikev2.EncryptedPayloadKE,
+) *ikev2.IKEPacket {
+	payloads := []ikev2.Payload{
+		&ikev2.EncryptedPayloadNotify{
+			ProtocolID: ikev2.ProtoESP, SPISize: 4,
+			NotifyType: ikev2.NotifyTypeRekeySA, SPI: spiBytes(session.espRemoteSPI),
+		},
+		&ikev2.EncryptedPayloadSA{Proposals: proposals},
+		&ikev2.EncryptedPayloadNonce{Data: bytes.Repeat([]byte{0x83}, 32)},
+	}
+	if ke != nil {
+		payloads = append(payloads, ke)
+	}
+	payloads = append(payloads,
+		retypeTrafficSelectorPayload(currentTSr, ikev2.PayloadTSi),
+		retypeTrafficSelectorPayload(currentTSi, ikev2.PayloadTSr),
+	)
+	return &ikev2.IKEPacket{
+		InitiatorSPI: session.spiI, ResponderSPI: session.spiR,
+		Version: 0x20, ExchangeType: ikev2.ExchangeCreateChildSA, MessageID: messageID,
+		Payloads: payloads,
+	}
+}
+
+func unacceptableESPProposal(spi uint32) *ikev2.Proposal {
+	proposal := ikev2.NewProposal(1, ikev2.ProtoESP, spiBytes(spi))
+	proposal.AddTransform(ikev2.TransformTypeEncr, ikev2.ENCR_3DES)
+	proposal.AddTransform(ikev2.TransformTypeESN, 0)
+	return proposal
+}
+
+func readPeerNotify(t *testing.T, session *Session, transport *testIKETransport) (uint16, error) {
+	t.Helper()
+	raw := receiveFragmentPacket(t, transport.sentIKE)
+	packet, err := ikev2.DecodePacket(raw)
+	if err != nil {
+		return 0, err
+	}
+	payloads, err := session.decryptAndParse(packet)
+	if err != nil || len(payloads) == 0 {
+		return 0, err
+	}
+	notify, ok := payloads[0].(*ikev2.EncryptedPayloadNotify)
+	if !ok {
+		return 0, nil
+	}
+	return notify.NotifyType, nil
+}

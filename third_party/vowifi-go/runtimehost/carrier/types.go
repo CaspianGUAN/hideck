@@ -132,6 +132,8 @@ type EffectiveCarrierConfig struct {
 	DeviceIdentityIMEI            string
 	DeviceIdentityEnabled         bool
 	IKEAuthMinimal                bool
+	OmitIKEFragmentNotifies       bool
+	CPRequestAttributes           []uint16
 	DeviceModel                   string
 	IMSDomain                     string
 	IMSRealm                      string

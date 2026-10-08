@@ -40,6 +40,17 @@ func TestBuildRejectsMissingIdentity(t *testing.T) {
 	}
 }
 
+func TestAISUsesModemIMEIWhenModelHasNoTAC(t *testing.T) {
+	policy.ClearCarrierOverrides()
+	t.Cleanup(policy.ClearCarrierOverrides)
+	plan := policy.CarrierPlanFromEffectiveConfig(policy.ResolveEffectiveCarrierConfig("520", "03"))
+	const modemIMEI = "356714117697975"
+	got, source := ResolveIdentityIMEI("520030393351967", modemIMEI, "iphone15,4", plan)
+	if got != modemIMEI || source != "input" {
+		t.Fatalf("AIS IMEI = %q source %q", got, source)
+	}
+}
+
 func TestResolveIdentityIMEIPriority(t *testing.T) {
 	plan := policy.CarrierPlan{Device: policy.DeviceIdentityPlan{
 		Model: "rmx3366", IdentityIMEI: "configured",

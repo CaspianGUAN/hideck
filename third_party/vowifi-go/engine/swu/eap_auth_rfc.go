@@ -225,13 +225,27 @@ func (s *Session) handleRFCChallenge(packet eapaka.Packet) ([]ikev2.Payload, err
 			return nil, err
 		}
 	}
-	response, err = s.applyAKAChallengeMode(response, packet, keys.KAut)
+	var raw []byte
+	response, raw, err = s.applyAKAChallengeMode(response, packet, keys.KAut)
 	if err != nil {
 		return nil, err
 	}
 	s.eapLastStep = "aka_challenge_answered"
+	checkcodeBytes := -1
+	if attr, ok := eapaka.FindAttribute(response.Attributes, eapaka.AttributeCheckcode); ok {
+		if value, valueErr := attr.CheckcodeValue(); valueErr == nil {
+			checkcodeBytes = len(value)
+		}
+	}
+	akaMode := ""
+	if s.cfg != nil {
+		akaMode = normalizeAKAChallengeMode(s.cfg.AKAChallengeMode)
+	}
 	logger.Info("EAP-AKA challenge verified; RES sent",
 		zap.Int("res_bytes", len(aka.RES)),
+		zap.Int("eap_bytes", len(raw)),
+		zap.Int("checkcode_bytes", checkcodeBytes),
+		zap.String("aka_mode", akaMode),
 		zap.String("request_attrs", eapAttributeTypes(packet.Attributes)),
 		zap.String("response_attrs", eapAttributeTypes(response.Attributes)))
 	_, s.eapResultIndicated = eapaka.FindAttribute(response.Attributes, eapaka.AttributeResultInd)
@@ -240,7 +254,9 @@ func (s *Session) handleRFCChallenge(packet eapaka.Packet) ([]ikev2.Payload, err
 	if err := s.captureFastReauthentication(packet, keys); err != nil {
 		return nil, err
 	}
-	return eapResponsePayload(response)
+	// Send the signed bytes. Re-encoding the parsed packet can change padding
+	// under the AT_MAC that was already computed.
+	return eapBytesPayload(raw), nil
 }
 
 func (s *Session) configuredAKAProvider() AKAProvider {

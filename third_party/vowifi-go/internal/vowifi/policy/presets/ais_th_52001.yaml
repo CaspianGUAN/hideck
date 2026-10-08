@@ -1,24 +1,25 @@
 mcc: "520"
 mnc: "01"
 id: ais_th_52001
-device_model: rmx3366
+device_model: modem
+device_identity_enabled: false
+omit_ike_fragment_notifies: false
+ip_stack: ipv4v6
+cp_request_attributes:
+  - 1
+  - 8
+  - 3
+  - 10
+  - 20
+  - 21
+  - 7
+ike_auth_minimal: true
+aka_challenge_mode: omit
 dpd_interval_seconds: 120
 ike_proposals:
-  - aes256-sha256-prfsha256-modp2048
-  - aes256-sha256-prfsha512-modp2048
-  - aes256-sha512-prfsha512-modp2048
-  - aes256-sha256-modp2048
-  - aes128-sha256-modp2048
-  - aes128-sha256-modp1024
-  - aes128-sha1-modp1024
-  - aes256-sha1-modp1024
+  - vocat
 esp_proposals:
-  - aes256-sha256
-  - aes256-sha512
-  - aes128-sha256
-  - aes256gcm16
-  - aes128gcm16
-  - aes128-sha1
+  - vocat
 ims_register_template:
   id: ais_th_52001
   include_pani_authenticated: true

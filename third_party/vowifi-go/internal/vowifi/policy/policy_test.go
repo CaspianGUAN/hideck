@@ -207,8 +207,6 @@ func TestResolveEmbeddedCarrierPresets(t *testing.T) {
 		{"502", "12", "hotlink_my_50212", "epdg.epc.mnc012.mcc502.pub.3gppnetwork.org"},
 		{"515", "02", "globe_ph_51502", "epdg.epc.mnc002.mcc515.pub.3gppnetwork.org"},
 		{"515", "03", "smart_ph_51503", "epdg.epc.mnc003.mcc515.pub.3gppnetwork.org"},
-		{"520", "01", "ais_th_52001", "epdg.epc.mnc001.mcc520.pub.3gppnetwork.org"},
-		{"520", "03", "ais_th_52003", "epdg.epc.mnc003.mcc520.pub.3gppnetwork.org"},
 		{"621", "30", "mtn_ng_62130", "epdg.epc.mnc030.mcc621.pub.3gppnetwork.org"},
 	} {
 		got := ResolveEffectiveCarrierConfig(item.mcc, item.mnc)
@@ -394,5 +392,42 @@ func TestIKEAuthMinimalOverrideReachesCarrierPlan(t *testing.T) {
 	}
 	if ResolveEffectiveCarrierConfig("310", "240").IKEAuthMinimal {
 		t.Fatal("ike_auth_minimal leaked to T-Mobile (310/240)")
+	}
+	if CarrierPlanFromEffectiveConfig(ResolveEffectiveCarrierConfig("520", "03")).IKE.OmitIKEFragmentNotifies {
+		t.Fatal("omit_ike_fragment_notifies is set on the AIS (520/03) IKE plan")
+	}
+	if ResolveEffectiveCarrierConfig("310", "240").OmitIKEFragmentNotifies {
+		t.Fatal("omit_ike_fragment_notifies leaked to T-Mobile (310/240)")
+	}
+}
+
+func TestAISPresetMatchesWorkingVoWiFiProfile(t *testing.T) {
+	ClearCarrierOverrides()
+	t.Cleanup(ClearCarrierOverrides)
+	for _, mnc := range []string{"01", "03"} {
+		config := ResolveEffectiveCarrierConfig("520", mnc)
+		if !config.IKEAuthMinimal || config.IPStackType != "ipv4v6" || config.AKAChallengeMode != "omit" {
+			t.Fatalf("520/%s minimal=%v stack=%s aka=%s", mnc, config.IKEAuthMinimal, config.IPStackType, config.AKAChallengeMode)
+		}
+		if config.DeviceModel != "modem" || config.DeviceIdentityEnabled || config.OmitIKEFragmentNotifies {
+			t.Fatalf("520/%s model=%s device_identity=%v omit_fragment=%v", mnc, config.DeviceModel, config.DeviceIdentityEnabled, config.OmitIKEFragmentNotifies)
+		}
+		wantEPDG := "epdg.epc.mnc0" + mnc + ".mcc520.pub.3gppnetwork.org"
+		if config.EPDGAddr != wantEPDG || config.EPDGAddrSource != "standard" {
+			t.Fatalf("520/%s epdg=%s source=%s", mnc, config.EPDGAddr, config.EPDGAddrSource)
+		}
+		if len(config.IKEProposals) != 1 || config.IKEProposals[0] != "vocat" ||
+			len(config.ESPProposals) != 1 || config.ESPProposals[0] != "vocat" {
+			t.Fatalf("520/%s ike=%v esp=%v", mnc, config.IKEProposals, config.ESPProposals)
+		}
+		wantCP := []uint16{1, 8, 3, 10, 20, 21, 7}
+		if len(config.CPRequestAttributes) != len(wantCP) {
+			t.Fatalf("520/%s cp=%v", mnc, config.CPRequestAttributes)
+		}
+		for index, attributeType := range wantCP {
+			if config.CPRequestAttributes[index] != attributeType {
+				t.Fatalf("520/%s cp=%v", mnc, config.CPRequestAttributes)
+			}
+		}
 	}
 }

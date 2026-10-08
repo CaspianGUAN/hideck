@@ -26,11 +26,13 @@ func requiredConfiguredIMSI(cfg *Config) (string, error) {
 	return imsi, nil
 }
 
-// normalizeAKAChallengeMode maps legacy aliases to the four challenge modes.
+// normalizeAKAChallengeMode maps legacy aliases onto the challenge modes.
 func normalizeAKAChallengeMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "", "minimal":
 		return "minimal"
+	case "empty", "empty_checkcode":
+		return "empty"
 	case "off", "none", "omit", "no_checkcode":
 		return "off"
 	case "echo", "checkcode":
@@ -100,10 +102,14 @@ func (s *Session) currentEAPIdentityForKeyDerivation() string {
 // buildCPRequestPayload builds the Configuration payload requesting an inner
 // IPv4 or IPv6 address (RFC 7296 section 3.15).
 func (s *Session) buildCPRequestPayload() *ikev2.EncryptedPayloadCP {
+	if attributes := s.configuredCPAttributes(); len(attributes) > 0 {
+		return &ikev2.EncryptedPayloadCP{CFGType: ikev2.CFG_REQUEST, Attributes: attributes}
+	}
 	ipv4 := []*ikev2.CPAttribute{
 		{Type: ikev2.CPAttrIP4Address},
 		{Type: ikev2.CPAttrIP4DNS},
 		{Type: ikev2.CPAttrPCSCFIP4},
+		{Type: ikev2.P_CSCF_IP4_ADDRESS_PRIV},
 	}
 	ipv6Address := make([]byte, net.IPv6len+1)
 	ipv6Address[net.IPv6len] = 64
@@ -111,6 +117,7 @@ func (s *Session) buildCPRequestPayload() *ikev2.EncryptedPayloadCP {
 		{Type: ikev2.CPAttrIP6Address, Value: ipv6Address},
 		{Type: ikev2.CPAttrIP6DNS},
 		{Type: ikev2.CPAttrPCSCFIP6},
+		{Type: ikev2.P_CSCF_IP6_ADDRESS_PRIV},
 		{Type: ikev2.ASSIGNED_PCSCF_IP6_ADDRESS},
 	}
 	attributes := ipv4
@@ -129,6 +136,68 @@ func (s *Session) buildCPRequestPayload() *ikev2.EncryptedPayloadCP {
 		attributes = append(attributes, ipv6...)
 	}
 	return &ikev2.EncryptedPayloadCP{CFGType: ikev2.CFG_REQUEST, Attributes: attributes}
+}
+
+// configuredCPAttributes builds a carrier-specific CFG_REQUEST list.
+// INTERNAL_IP6_ADDRESS keeps the 17-byte form with a /64 prefix hint,
+// except VoCat's address/DNS/P-CSCF/APPLICATION_VERSION list, which sends
+// every attribute with an empty value.
+func (s *Session) configuredCPAttributes() []*ikev2.CPAttribute {
+	if s == nil || s.cfg == nil || len(s.cfg.CPRequestAttributes) == 0 {
+		return nil
+	}
+	emptyValues := vocatCPRequest(s.cfg.CPRequestAttributes)
+	attributes := make([]*ikev2.CPAttribute, 0, len(s.cfg.CPRequestAttributes))
+	for _, attributeType := range s.cfg.CPRequestAttributes {
+		if attributeType == 0 {
+			continue
+		}
+		attribute := &ikev2.CPAttribute{Type: attributeType}
+		if !emptyValues && attributeType == ikev2.CPAttrIP6Address {
+			value := make([]byte, net.IPv6len+1)
+			value[net.IPv6len] = 64
+			attribute.Value = value
+		}
+		attributes = append(attributes, attribute)
+	}
+	return attributes
+}
+
+// vocatCPRequest is VoCat's configuration request: IPv4 address, IPv6 address,
+// IPv4 DNS, IPv6 DNS, P-CSCF v4, P-CSCF v6, and APPLICATION_VERSION.
+// Every attribute is an empty 4-byte header, including INTERNAL_IP6_ADDRESS.
+func vocatCPRequest(attributes []uint16) bool {
+	want := []uint16{
+		ikev2.INTERNAL_IP4_ADDRESS,
+		ikev2.INTERNAL_IP6_ADDRESS,
+		ikev2.INTERNAL_IP4_DNS,
+		ikev2.INTERNAL_IP6_DNS,
+		ikev2.P_CSCF_IP4_ADDRESS,
+		ikev2.P_CSCF_IP6_ADDRESS,
+		ikev2.APPLICATION_VERSION,
+	}
+	if len(attributes) != len(want) {
+		return false
+	}
+	for index, attributeType := range want {
+		if attributes[index] != attributeType {
+			return false
+		}
+	}
+	return true
+}
+
+func cpAttributeTypes(cp *ikev2.EncryptedPayloadCP) []uint16 {
+	if cp == nil {
+		return nil
+	}
+	types := make([]uint16, 0, len(cp.Attributes))
+	for _, attribute := range cp.Attributes {
+		if attribute != nil {
+			types = append(types, attribute.Type)
+		}
+	}
+	return types
 }
 
 // buildTrafficSelectorsForIPStack builds the TSi/TSr traffic selectors for the
@@ -150,6 +219,36 @@ func (s *Session) childTrafficSelectors() (*ikev2.EncryptedPayloadTS, *ikev2.Enc
 		return buildTrafficSelectorsForIPStack(nil)
 	}
 	return trafficSelectorPayloads(initiator, responder)
+}
+
+func (s *Session) configuredIPStack() string {
+	if s == nil || s.cfg == nil {
+		return ""
+	}
+	mode := strings.TrimSpace(s.cfg.IPStackType)
+	if mode == "" {
+		mode = s.cfg.IPStack
+	}
+	return strings.ToLower(mode)
+}
+
+// initialTrafficSelectors is the TSi/TSr pair for the first IKE_AUTH, before
+// the ePDG has assigned an inner address.
+func (s *Session) initialTrafficSelectors() (*ikev2.EncryptedPayloadTS, *ikev2.EncryptedPayloadTS) {
+	switch s.configuredIPStack() {
+	case "ipv4":
+		return trafficSelectorPayloads(
+			[]*ikev2.TrafficSelector{anyIPv4Selector()},
+			[]*ikev2.TrafficSelector{anyIPv4Selector()},
+		)
+	case "ipv6":
+		return trafficSelectorPayloads(
+			[]*ikev2.TrafficSelector{anyIPv6Selector()},
+			[]*ikev2.TrafficSelector{anyIPv6Selector()},
+		)
+	default:
+		return buildTrafficSelectorsForIPStack(nil)
+	}
 }
 
 func buildTrafficSelectorsForIPStack(innerIP net.IP) (*ikev2.EncryptedPayloadTS, *ikev2.EncryptedPayloadTS) {
@@ -355,9 +454,12 @@ func (s *Session) buildIKEAuthInitPayloads() ([]ikev2.Payload, error) {
 		return nil, err
 	}
 
-	// TSi / TSr and Configuration request.
-	tsi, tsr := buildTrafficSelectorsForIPStack(nil)
+	// TSi / TSr follow the configured stack. An IPv6-only carrier (AIS)
+	// must not also offer 0.0.0.0/0; that initial selector set is fixed
+	// before an inner address exists.
+	tsi, tsr := s.initialTrafficSelectors()
 	cp := s.buildCPRequestPayload()
+	logger.Info("IKE_AUTH configuration request", zap.Uint16s("cp_attributes", cpAttributeTypes(cp)))
 
 	// CP (request inner address) and RFC 5998 EAP-only authentication.
 	eapOnly := &ikev2.EncryptedPayloadNotify{
@@ -367,15 +469,28 @@ func (s *Session) buildIKEAuthInitPayloads() ([]ikev2.Payload, error) {
 	ticket := &ikev2.EncryptedPayloadNotify{NotifyType: ikev2.TICKET_REQUEST}
 	s.eapOnlyRequested = true
 
-	payloads := []ikev2.Payload{idi, idr, cp, sa2}
-	if childKE != nil {
-		payloads = append(payloads, childKE)
-	}
 	if s.cfg != nil && s.cfg.IKEAuthMinimal {
-		payloads = append(payloads, tsi, tsr, eapOnly)
-		// device_identity_enabled adds the 3GPP DEVICE_IDENTITY up front, as
-		// iPhones do for carriers that bind Wi-Fi Calling entitlement to the
-		// device (AIS). Only a configured IMEI is sent, never a generated one.
+		if usesVocatHandshake(s.cfg) {
+			// VoCat buildInitialEAPAuth: IDi, IDr, EAP_ONLY, MOBIKE,
+			// INITIAL_CONTACT, SA, TSi, TSr, CP. Device identity stays off
+			// this first packet and is sent only after the ePDG asks.
+			vocatEAPOnly := &ikev2.EncryptedPayloadNotify{NotifyType: ikev2.NotifyTypeEAPOnlyAuthentication}
+			payloads := []ikev2.Payload{idi, idr, vocatEAPOnly, mobike}
+			payloads = append(payloads, s.initialContactNotify()...)
+			payloads = append(payloads, sa2)
+			if childKE != nil {
+				payloads = append(payloads, childKE)
+			}
+			payloads = append(payloads, tsi, tsr, cp)
+			logger.Info("IKE_AUTH payload order", zap.Strings("order", ikeAuthPayloadNames(payloads)))
+			return payloads, nil
+		}
+		// Minimal IKE_AUTH: IDi, IDr, EAP_ONLY, SA, TSi, TSr, CP, DEVICE_IDENTITY.
+		payloads := []ikev2.Payload{idi, idr, eapOnly, sa2}
+		if childKE != nil {
+			payloads = append(payloads, childKE)
+		}
+		payloads = append(payloads, tsi, tsr, cp)
 		if s.cfg.EnableDeviceIdentitySpoof && strings.TrimSpace(s.cfg.DeviceIdentityIMEI) != "" {
 			identity, err := s.deviceIdentityPayloads()
 			if err != nil {
@@ -385,7 +500,12 @@ func (s *Session) buildIKEAuthInitPayloads() ([]ikev2.Payload, error) {
 				payloads = append(payloads, identity[0])
 			}
 		}
+		logger.Info("IKE_AUTH payload order", zap.Strings("order", ikeAuthPayloadNames(payloads)))
 		return payloads, nil
+	}
+	payloads := []ikev2.Payload{idi, idr, cp, sa2}
+	if childKE != nil {
+		payloads = append(payloads, childKE)
 	}
 	payloads = append(payloads, tsi, tsr, eapOnly, mobike, ticket)
 	payloads = append(payloads, s.initialContactNotify()...)
@@ -394,6 +514,37 @@ func (s *Session) buildIKEAuthInitPayloads() ([]ikev2.Payload, error) {
 		return nil, err
 	}
 	return append(payloads, devicePayloads...), nil
+}
+
+func ikeAuthPayloadNames(payloads []ikev2.Payload) []string {
+	names := make([]string, 0, len(payloads))
+	for _, payload := range payloads {
+		switch value := payload.(type) {
+		case *ikev2.EncryptedPayloadID:
+			if value.IsInitiator {
+				names = append(names, "IDi")
+				continue
+			}
+			names = append(names, "IDr")
+		case *ikev2.EncryptedPayloadNotify:
+			names = append(names, ikev2.NotifyTypeToString(value.NotifyType))
+		case *ikev2.EncryptedPayloadSA:
+			names = append(names, "SA")
+		case *ikev2.EncryptedPayloadKE:
+			names = append(names, "KE")
+		case *ikev2.EncryptedPayloadTS:
+			if value.IsInitiator {
+				names = append(names, "TSi")
+				continue
+			}
+			names = append(names, "TSr")
+		case *ikev2.EncryptedPayloadCP:
+			names = append(names, "CP")
+		default:
+			names = append(names, fmt.Sprintf("type-%d", payload.Type()))
+		}
+	}
+	return names
 }
 
 func (s *Session) initialContactNotify() []ikev2.Payload {
@@ -749,8 +900,10 @@ func parseAssignedInnerConfig(payloads []ikev2.Payload) (assignedInnerConfig, er
 	if err != nil {
 		return result, err
 	}
-	// TS 24.302 private attr 16390: one or more IPv6 P-CSCF addresses.
-	// Lebara concatenates two IPv6s in one attribute instead of RFC 7651 20/21.
+	// Pre-RFC 7651 private attributes. AIS answers each IPv6 P-CSCF as type
+	// 16386 (16 bytes). Lebara concatenates two IPv6s in type 16390.
+	result.pcscf = appendUniqueIPs(result.pcscf, cpChunkedAddresses(cp, ikev2.P_CSCF_IP4_ADDRESS_PRIV, net.IPv4len))
+	result.pcscf = appendUniqueIPs(result.pcscf, cpChunkedAddresses(cp, ikev2.P_CSCF_IP6_ADDRESS_PRIV, net.IPv6len))
 	result.pcscf = appendUniqueIPs(result.pcscf, cpChunkedAddresses(cp, ikev2.ASSIGNED_PCSCF_IP6_ADDRESS, net.IPv6len))
 
 	if result.ipv4 == nil && result.ipv6 == nil {

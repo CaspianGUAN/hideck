@@ -90,6 +90,7 @@ func DefaultCarrierESPProposals() []string {
 
 func cloneStrings(values []string) []string { return append([]string(nil), values...) }
 func cloneInts(values []int) []int          { return append([]int(nil), values...) }
+func cloneUint16s(values []uint16) []uint16 { return append([]uint16(nil), values...) }
 
 func cloneMechanisms(values []IPSec3GPPSecurityMechanism) []IPSec3GPPSecurityMechanism {
 	return append([]IPSec3GPPSecurityMechanism(nil), values...)

@@ -12,6 +12,8 @@ import (
 
 	"github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
+	"github.com/iniwex5/vowifi-go/engine/logger"
+	"go.uber.org/zap"
 )
 
 const (
@@ -114,8 +116,8 @@ func (s *Session) buildIKESAInitPacketObject() (*ikev2.IKEPacket, error) {
 		&ikev2.EncryptedPayloadNonce{NonceData: append([]byte(nil), s.Ni...)},
 	)
 	payloads = append(payloads, s.ikeInitNetworkNotifies()...)
-	payloads = append(payloads, &ikev2.EncryptedPayloadNotify{NotifyType: notifyFragmentation})
-	payloads = append(payloads, &ikev2.EncryptedPayloadNotify{NotifyType: ikev2.NON_FIRST_FRAGMENTS_ALSO})
+	payloads = append(payloads, s.ikeInitFragmentNotifies()...)
+	logger.Info("IKE_SA_INIT notifies", zap.Uint16s("types", saInitNotifyTypes(payloads)))
 	return &ikev2.IKEPacket{
 		Header:   newIKEHeader(s.spiI, [8]byte{}, ikev2.IKE_SA_INIT, ikev2.FlagInitiator, 0),
 		Payloads: payloads,
@@ -176,6 +178,33 @@ func (s *Session) generateIKEInitMaterial() error {
 		return fmt.Errorf("generate nonce: %w", err)
 	}
 	return nil
+}
+
+// ikeInitFragmentNotifies appends the SA_INIT fragmentation notifies.
+// A vocat handshake sends IKEV2_FRAGMENTATION_SUPPORTED only. Every other
+// handshake keeps both notifies unless the carrier omits them.
+func (s *Session) ikeInitFragmentNotifies() []ikev2.Payload {
+	if usesVocatHandshake(s.cfg) {
+		return []ikev2.Payload{&ikev2.EncryptedPayloadNotify{NotifyType: notifyFragmentation}}
+	}
+	if s.cfg == nil || !s.cfg.OmitIKEFragmentNotifies {
+		return []ikev2.Payload{
+			&ikev2.EncryptedPayloadNotify{NotifyType: notifyFragmentation},
+			&ikev2.EncryptedPayloadNotify{NotifyType: ikev2.NON_FIRST_FRAGMENTS_ALSO},
+		}
+	}
+	return nil
+}
+
+func saInitNotifyTypes(payloads []ikev2.Payload) []uint16 {
+	types := make([]uint16, 0)
+	for _, payload := range payloads {
+		notify, ok := payload.(*ikev2.EncryptedPayloadNotify)
+		if ok {
+			types = append(types, notify.NotifyType)
+		}
+	}
+	return types
 }
 
 func (s *Session) ikeInitNetworkNotifies() []ikev2.Payload {
@@ -251,6 +280,7 @@ func (s *Session) selectRequestedDHGroup(groupError *ErrInvalidKEGroup) error {
 	if err != nil {
 		return fmt.Errorf("服务器期望的 DH Group %d 不支持: %v", group, err)
 	}
+	logger.Info("IKE_SA_INIT retrying with ePDG DH group", zap.Uint16("dh_group", group))
 	s.dh, s.dhGroup = dh, group
 	s.spiI, s.spiR = [8]byte{}, [8]byte{}
 	s.SPIi, s.SPIr = 0, 0

@@ -88,7 +88,8 @@ func populatedCarrierConfig() carrier.EffectiveCarrierConfig {
 		ESPProposals: []string{"esp-a", "esp-b"}, EnableLegacyCiphers: true,
 		AllowedLegacyCiphers: []string{"legacy-a", "legacy-b"}, AlgorithmPolicy: "strict",
 		DeviceIdentityIMEI: "490154203237518", DeviceIdentityEnabled: true, DeviceModel: "model",
-		IMSDomain: "ims.example", IMSRealm: "realm.example", IMSRegistrar: "registrar.example",
+		CPRequestAttributes: []uint16{8, 16384, 16386, 20, 21},
+		IMSDomain:           "ims.example", IMSRealm: "realm.example", IMSRegistrar: "registrar.example",
 		IMSPCSCF: "pcscf.example", IMSUserAgent: "user-agent", IMSTransport: "tcp",
 		IMSIdentitySource: "isim", IMSLocalPort: 5060, IMSTCPKeepaliveSeconds: 40,
 		IMSOptionsPingIntervalSeconds: 50, DPDKeepaliveIntervalSeconds: 60,
@@ -126,6 +127,7 @@ func mutateExternalSlices(cfg *carrier.EffectiveCarrierConfig) {
 	cfg.IKEProposals[0] = "changed"
 	cfg.ESPProposals[0] = "changed"
 	cfg.AllowedLegacyCiphers[0] = "changed"
+	cfg.CPRequestAttributes[0] = 1
 	cfg.IMSRegisterTemplate.ContactParamOrder[0] = "changed"
 	cfg.IMSRegisterTemplate.SecurityClientMechanisms[0].Alg = "changed"
 	cfg.IMSRegisterTemplate.RegisterPolicy.TemporaryStatusCodes[0] = 999
@@ -136,6 +138,7 @@ func mutateInternalSlices(cfg *policy.EffectiveCarrierConfig) {
 	cfg.IKEProposals[0] = "changed"
 	cfg.ESPProposals[0] = "changed"
 	cfg.AllowedLegacyCiphers[0] = "changed"
+	cfg.CPRequestAttributes[0] = 1
 	cfg.IMSRegisterTemplate.ContactParamOrder[0] = "changed"
 	cfg.IMSRegisterTemplate.SecurityClientMechanisms[0].Alg = "changed"
 	cfg.IMSRegisterTemplate.RegisterPolicy.TemporaryStatusCodes[0] = 999
@@ -145,7 +148,7 @@ func mutateInternalSlices(cfg *policy.EffectiveCarrierConfig) {
 func assertInternalSlicesUnchanged(t *testing.T, cfg policy.EffectiveCarrierConfig) {
 	t.Helper()
 	if cfg.IKEProposals[0] != "ike-a" || cfg.ESPProposals[0] != "esp-a" ||
-		cfg.AllowedLegacyCiphers[0] != "legacy-a" ||
+		cfg.AllowedLegacyCiphers[0] != "legacy-a" || cfg.CPRequestAttributes[0] != 8 ||
 		cfg.IMSRegisterTemplate.ContactParamOrder[0] != "access_type" ||
 		cfg.IMSRegisterTemplate.SecurityClientMechanisms[0].Alg != "hmac-md5-96" ||
 		cfg.IMSRegisterTemplate.RegisterPolicy.TemporaryStatusCodes[0] != 408 ||
@@ -157,7 +160,7 @@ func assertInternalSlicesUnchanged(t *testing.T, cfg policy.EffectiveCarrierConf
 func assertExternalSlicesUnchanged(t *testing.T, cfg carrier.EffectiveCarrierConfig) {
 	t.Helper()
 	if cfg.IKEProposals[0] != "ike-a" || cfg.ESPProposals[0] != "esp-a" ||
-		cfg.AllowedLegacyCiphers[0] != "legacy-a" ||
+		cfg.AllowedLegacyCiphers[0] != "legacy-a" || cfg.CPRequestAttributes[0] != 8 ||
 		cfg.IMSRegisterTemplate.ContactParamOrder[0] != "access_type" ||
 		cfg.IMSRegisterTemplate.SecurityClientMechanisms[0].Alg != "hmac-md5-96" ||
 		cfg.IMSRegisterTemplate.RegisterPolicy.TemporaryStatusCodes[0] != 408 ||

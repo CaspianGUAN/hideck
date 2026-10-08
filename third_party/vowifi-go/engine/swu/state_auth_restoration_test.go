@@ -11,6 +11,7 @@ import (
 func TestNormalizeAKAChallengeModeMatchesLegacyAliases(t *testing.T) {
 	tests := map[string]string{
 		"": "minimal", "minimal": "minimal",
+		"empty": "empty", "empty_checkcode": "empty",
 		"off": "off", "NONE": "off", "omit": "off", "no_checkcode": "off",
 		"echo": "checkcode", "checkcode": "checkcode",
 		"recalc": "recompute", " ReCompute ": "recompute",
@@ -45,9 +46,9 @@ func TestBuildCPRequestPayloadHonorsIPStack(t *testing.T) {
 		mode string
 		want []uint16
 	}{
-		{"ipv4", []uint16{1, 3, 20}},
-		{"ipv6", []uint16{8, 10, 21, 16390}},
-		{"", []uint16{1, 3, 20, 8, 10, 21, 16390}},
+		{"ipv4", []uint16{1, 3, 20, 16384}},
+		{"ipv6", []uint16{8, 10, 21, 16386, 16390}},
+		{"", []uint16{1, 3, 20, 16384, 8, 10, 21, 16386, 16390}},
 	}
 	for _, test := range tests {
 		session := NewSession(&Config{IPStackType: test.mode})
@@ -63,6 +64,30 @@ func TestBuildCPRequestPayloadHonorsIPStack(t *testing.T) {
 			if want == ikev2.CPAttrIP6Address && (len(attribute.Value) != 17 || attribute.Value[16] != 64) {
 				t.Errorf("IPv6 request = %x", attribute.Value)
 			}
+		}
+	}
+}
+
+func TestConfiguredCPRequestReplacesIPStackDefault(t *testing.T) {
+	session := NewSession(&Config{
+		IPStackType:         "ipv6",
+		CPRequestAttributes: []uint16{8, 16384, 16386, 20, 21},
+	})
+	payload := session.buildCPRequestPayload()
+	want := []uint16{8, 16384, 16386, 20, 21}
+	if len(payload.Attributes) != len(want) {
+		t.Fatalf("attributes = %d", len(payload.Attributes))
+	}
+	for index, attributeType := range want {
+		attribute := payload.Attributes[index]
+		if attribute.Type != attributeType {
+			t.Errorf("attribute[%d] = %d, want %d", index, attribute.Type, attributeType)
+		}
+		if attributeType == 8 && (len(attribute.Value) != 17 || attribute.Value[16] != 64) {
+			t.Errorf("IPv6 request = %x", attribute.Value)
+		}
+		if attributeType != 8 && len(attribute.Value) != 0 {
+			t.Errorf("attribute %d value = %x", attributeType, attribute.Value)
 		}
 	}
 }
@@ -212,6 +237,48 @@ func notifyTypes(payloads []ikev2.Payload) []uint16 {
 		}
 	}
 	return types
+}
+
+func TestIPv6InitialIKEAuthOmitsIPv4Selectors(t *testing.T) {
+	session := NewSession(&Config{
+		IMSI: "520030393351967", APN: "ims", IKEAuthMinimal: true, IPStackType: "ipv6",
+	})
+	payloads, err := session.buildIKEAuthInitPayloads()
+	if err != nil {
+		t.Fatalf("buildIKEAuthInitPayloads: %v", err)
+	}
+	var tsi *ikev2.EncryptedPayloadTS
+	for _, payload := range payloads {
+		if value, ok := payload.(*ikev2.EncryptedPayloadTS); ok && value.IsInitiator {
+			tsi = value
+			break
+		}
+	}
+	if tsi == nil || len(tsi.TrafficSelectors) != 1 || len(tsi.TrafficSelectors[0].StartAddr) != 16 {
+		t.Fatalf("IPv6 TSi = %+v, want one IPv6 selector", tsi)
+	}
+}
+
+func TestMinimalIKEAuthPayloadOrder(t *testing.T) {
+	session := NewSession(&Config{
+		IMSI: "520030393351967", APN: "ims", DeviceIdentityIMEI: "358983361433761",
+		IKEAuthMinimal: true, EnableDeviceIdentitySpoof: true, IPStackType: "ipv6",
+		CPRequestAttributes: []uint16{8, 16384, 16386, 20, 21},
+	})
+	payloads, err := session.buildIKEAuthInitPayloads()
+	if err != nil {
+		t.Fatalf("buildIKEAuthInitPayloads: %v", err)
+	}
+	want := []string{"IDi", "IDr", "EAP_ONLY_AUTHENTICATION", "SA", "TSi", "TSr", "CP", "DEVICE_IDENTITY_3GPP"}
+	if got := ikeAuthPayloadNames(payloads); len(got) != len(want) {
+		t.Fatalf("payload order = %v, want %v", got, want)
+	} else {
+		for index := range want {
+			if got[index] != want[index] {
+				t.Fatalf("payload order = %v, want %v", got, want)
+			}
+		}
+	}
 }
 
 func TestMinimalIKEAuthSendsOnlyEAPOnly(t *testing.T) {

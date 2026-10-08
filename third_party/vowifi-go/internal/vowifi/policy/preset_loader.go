@@ -71,6 +71,7 @@ func cloneCarrierPreset(value CarrierPreset) CarrierPreset {
 	value.EPDGPort = cloneIntPointer(value.EPDGPort)
 	value.DeviceIdentityEnabled = cloneBoolPointer(value.DeviceIdentityEnabled)
 	value.IKEAuthMinimal = cloneBoolPointer(value.IKEAuthMinimal)
+	value.OmitIKEFragmentNotifies = cloneBoolPointer(value.OmitIKEFragmentNotifies)
 	value.NATKeepaliveSeconds = cloneIntPointer(value.NATKeepaliveSeconds)
 	value.DPDIntervalSeconds = cloneIntPointer(value.DPDIntervalSeconds)
 	value.EnableLegacyCiphers = cloneBoolPointer(value.EnableLegacyCiphers)
@@ -81,6 +82,7 @@ func cloneCarrierPreset(value CarrierPreset) CarrierPreset {
 	value.AllowedLegacyCiphers = cloneStrings(value.AllowedLegacyCiphers)
 	value.IKEProposals = cloneStrings(value.IKEProposals)
 	value.ESPProposals = cloneStrings(value.ESPProposals)
+	value.CPRequestAttributes = cloneUint16s(value.CPRequestAttributes)
 	value.IMSRegisterTemplate = cloneIMSRegisterTemplate(value.IMSRegisterTemplate)
 	return value
 }

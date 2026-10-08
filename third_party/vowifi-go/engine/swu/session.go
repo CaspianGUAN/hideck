@@ -124,6 +124,12 @@ type Config struct {
 	// TS and EAP_ONLY (as SWu reference clients do) and answers
 	// DEVICE_IDENTITY only when the ePDG requests it. Per carrier.
 	IKEAuthMinimal bool
+	// OmitIKEFragmentNotifies drops IKEV2_FRAGMENTATION_SUPPORTED and
+	// NON_FIRST_FRAGMENTS_ALSO from IKE_SA_INIT. Per carrier.
+	OmitIKEFragmentNotifies bool
+	// CPRequestAttributes replaces the default CFG_REQUEST list when set.
+	// Empty keeps the IP-stack defaults. Type 8 still carries a /64 hint.
+	CPRequestAttributes []uint16
 	// ResumeTicket and ResumeOldSKd restore the RFC 5723 cross-session
 	// credential. OnTicketUpdate persists replacement or invalidation.
 	ResumeTicket   []byte

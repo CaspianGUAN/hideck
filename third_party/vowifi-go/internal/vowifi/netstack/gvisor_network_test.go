@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -71,6 +72,42 @@ func TestTunnelNetworkSendsUDPThroughPacketIO(t *testing.T) {
 		assertIPv4UDPPacket(t, packet, net.IPv4(10, 0, 0, 1), payload)
 	case <-time.After(time.Second):
 		t.Fatal("UDP packet did not reach SWu packet IO")
+	}
+}
+
+func TestTunnelNetworkListenPacketSendsIPv6UDP(t *testing.T) {
+	for _, prefixLen := range []int{64, 128} {
+		t.Run(fmt.Sprintf("prefix_%d", prefixLen), func(t *testing.T) {
+			packetIO := &channelPacketIO{inbound: make(chan []byte, 8), outbound: make(chan []byte, 8)}
+			local := net.ParseIP("2001:db8:4d68:a1fa:1:0:d8c9:9a38")
+			remote := &net.UDPAddr{IP: net.ParseIP("2405:9800:9700:2393::16"), Port: 45466}
+			network, err := NewTunnelNetwork(local, prefixLen, nil, packetIO)
+			if err != nil {
+				t.Fatalf("NewTunnelNetwork: %v", err)
+			}
+			defer network.Close()
+
+			conn, err := network.ListenPacket("udp", &net.UDPAddr{IP: local, Port: 0})
+			if err != nil {
+				t.Fatalf("ListenPacket: %v", err)
+			}
+			defer conn.Close()
+			payload := []byte{0x80, 0x60, 0x00, 0x01}
+			if _, err := conn.WriteTo(payload, remote); err != nil {
+				t.Fatalf("immediate WriteTo: %v", err)
+			}
+			select {
+			case packet := <-packetIO.outbound:
+				assertIPv6UDPPacket(t, packet, remote.IP, payload)
+			case <-time.After(time.Second):
+				t.Fatal("IPv6 UDP packet did not reach SWu packet IO")
+			}
+
+			time.Sleep(1200 * time.Millisecond)
+			if _, err := conn.WriteTo(payload, remote); err != nil {
+				t.Fatalf("WriteTo after DAD window: %v", err)
+			}
+		})
 	}
 }
 

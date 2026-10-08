@@ -126,6 +126,8 @@ type CarrierOverride struct {
 	AKAIdentityMode               string                      `yaml:"aka_identity_mode"`
 	DeviceIdentityEnabled         *bool                       `yaml:"device_identity_enabled"`
 	IKEAuthMinimal                *bool                       `yaml:"ike_auth_minimal"`
+	OmitIKEFragmentNotifies       *bool                       `yaml:"omit_ike_fragment_notifies"`
+	CPRequestAttributes           []uint16                    `yaml:"cp_request_attributes"`
 	DeviceIdentityIMEI            string                      `yaml:"device_identity_imei"`
 	NATKeepaliveSeconds           *int                        `yaml:"nat_keepalive_seconds"`
 	DPDIntervalSeconds            *int                        `yaml:"dpd_interval_seconds"`
@@ -173,6 +175,8 @@ type CarrierPreset struct {
 	DeviceIdentityIMEI               string
 	DeviceIdentityEnabled            *bool
 	IKEAuthMinimal                   *bool
+	OmitIKEFragmentNotifies          *bool
+	CPRequestAttributes              []uint16
 	NATKeepaliveSeconds              *int
 	DPDIntervalSeconds               *int
 	EnableLegacyCiphers              *bool
@@ -226,6 +230,8 @@ type EffectiveCarrierConfig struct {
 	ForceSMSCAuth                                      bool
 	AKAPrimePreferred                                  bool
 	IKEAuthMinimal                                     bool
+	OmitIKEFragmentNotifies                            bool
+	CPRequestAttributes                                []uint16
 	XCAPAPN                                            string
 	MediaTypeRestrictionPolicy                         string
 	PreferredAccessNetworks                            []string
@@ -267,6 +273,8 @@ type IKEPlan struct {
 	IKERekeyIntervalSeconds                            int
 	AKAPrimePreferred                                  bool
 	IKEAuthMinimal                                     bool
+	OmitIKEFragmentNotifies                            bool
+	CPRequestAttributes                                []uint16
 }
 type IMSPlan struct {
 	Domain, Realm, Registrar, PCSCF, UserAgent, Transport, IdentitySource string

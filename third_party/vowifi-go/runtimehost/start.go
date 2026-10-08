@@ -478,6 +478,7 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 			req.Prepared.Profile.MCC, req.Prepared.Profile.MNC,
 		),
 		PAccessNetworkCountry: imscore.CountryISO2FromMCC(req.Prepared.Profile.MCC),
+		CarrierPresetID:       strings.TrimSpace(carrierConfig.PresetID),
 		RegisterTemplate:      registerTemplate,
 		OnLocalAddressChange: func(oldIP, newIP net.IP) error {
 			return tunnel.UpdateAddresses(oldIP, newIP)

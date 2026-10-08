@@ -289,8 +289,9 @@ func TestInitialEAPIKEAuthOmitsAuthAndEAP(t *testing.T) {
 	cp := payloads[2].(*ikev2.EncryptedPayloadCP)
 	wantCPTypes := []uint16{
 		ikev2.CPAttrIP4Address, ikev2.CPAttrIP4DNS, ikev2.CPAttrPCSCFIP4,
+		ikev2.P_CSCF_IP4_ADDRESS_PRIV,
 		ikev2.CPAttrIP6Address, ikev2.CPAttrIP6DNS, ikev2.CPAttrPCSCFIP6,
-		ikev2.ASSIGNED_PCSCF_IP6_ADDRESS,
+		ikev2.P_CSCF_IP6_ADDRESS_PRIV, ikev2.ASSIGNED_PCSCF_IP6_ADDRESS,
 	}
 	if len(cp.Attributes) != len(wantCPTypes) {
 		t.Fatalf("initial CP request address families: %+v", cp.Attributes)
@@ -534,7 +535,7 @@ func responseCheckcode(t *testing.T, attrs []eapaka.Attribute) ([]byte, bool) {
 
 // AIS (520/03) sends an empty AT_CHECKCODE and refuses a response without one.
 func TestChallengeResponseAnswersEmptyCheckcode(t *testing.T) {
-	for _, mode := range []string{"", "minimal", "checkcode", "recompute"} {
+	for _, mode := range []string{"", "minimal", "empty", "checkcode", "recompute"} {
 		session := NewSession(&Config{AKAChallengeMode: mode})
 		attrs := session.appendAKAChallengeMetaAttrs(nil, challengeWithCheckcode(eapaka.CheckcodeAttribute(nil)))
 		value, ok := responseCheckcode(t, attrs)
@@ -546,10 +547,39 @@ func TestChallengeResponseAnswersEmptyCheckcode(t *testing.T) {
 
 func TestChallengeResponseEchoesFullCheckcode(t *testing.T) {
 	digest := bytes.Repeat([]byte{0x5a}, 20)
-	session := NewSession(&Config{AKAChallengeMode: "minimal"})
+	session := NewSession(&Config{AKAChallengeMode: "checkcode"})
 	attrs := session.appendAKAChallengeMetaAttrs(nil, challengeWithCheckcode(eapaka.CheckcodeAttribute(digest)))
 	if value, ok := responseCheckcode(t, attrs); !ok || !bytes.Equal(value, digest) {
 		t.Fatalf("AT_CHECKCODE present=%v value=%x, want %x", ok, value, digest)
+	}
+}
+
+// Mode "empty" answers AT_RES + an empty AT_CHECKCODE + AT_MAC. An 8-byte
+// RES makes that packet 44 bytes. A non-empty server checkcode must not be
+// copied in.
+func TestEmptyCheckcodeResponseMatchesAISWireSize(t *testing.T) {
+	digest := bytes.Repeat([]byte{0x5a}, 20)
+	session := NewSession(&Config{AKAChallengeMode: "empty"})
+	attrs := session.appendAKAChallengeMetaAttrs(
+		[]eapaka.Attribute{eapaka.RESAttribute(bytes.Repeat([]byte{0x11}, 8))},
+		challengeWithCheckcode(eapaka.CheckcodeAttribute(digest), eapaka.BiddingAttribute(true)),
+	)
+	raw, err := (eapaka.Packet{
+		Code: eapaka.CodeResponse, Identifier: 1, Type: eapaka.TypeAKA,
+		Subtype: eapaka.SubtypeChallenge, Attributes: attrs,
+	}).MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal response: %v", err)
+	}
+	if len(raw) != 44 {
+		t.Fatalf("EAP response length = %d, want 44", len(raw))
+	}
+	value, ok := responseCheckcode(t, attrs)
+	if !ok || len(value) != 0 {
+		t.Fatalf("AT_CHECKCODE present=%v value=%x, want empty", ok, value)
+	}
+	if _, ok := eapaka.FindAttribute(attrs, eapaka.AttributeBidding); ok {
+		t.Fatal("challenge AT_BIDDING was copied into the response")
 	}
 }
 
@@ -559,6 +589,35 @@ func TestChallengeResponseOmitsCheckcodeWhenNotAsked(t *testing.T) {
 	attrs := session.appendAKAChallengeMetaAttrs(nil, challengeWithCheckcode())
 	if _, ok := responseCheckcode(t, attrs); ok {
 		t.Fatal("AT_CHECKCODE added to a challenge that did not carry one")
+	}
+}
+
+// AIS mode "omit" answers a challenge that carries AT_CHECKCODE and
+// AT_BIDDING with AT_RES and AT_MAC only. An 8-byte RES makes that
+// packet 40 bytes.
+func TestOmitCheckcodeResponseMatchesAISWireSize(t *testing.T) {
+	digest := bytes.Repeat([]byte{0x5a}, 20)
+	session := NewSession(&Config{AKAChallengeMode: "omit"})
+	attrs := session.appendAKAChallengeMetaAttrs(
+		[]eapaka.Attribute{eapaka.RESAttribute(bytes.Repeat([]byte{0x11}, 8))},
+		challengeWithCheckcode(eapaka.CheckcodeAttribute(digest), eapaka.BiddingAttribute(true)),
+	)
+	if len(attrs) != 2 || attrs[0].Type != eapaka.AttributeRES || attrs[1].Type != eapaka.AttributeMAC {
+		got := make([]uint8, len(attrs))
+		for index, attr := range attrs {
+			got[index] = attr.Type
+		}
+		t.Fatalf("response attributes = %v, want AT_RES then AT_MAC", got)
+	}
+	raw, err := (eapaka.Packet{
+		Code: eapaka.CodeResponse, Identifier: 1, Type: eapaka.TypeAKA,
+		Subtype: eapaka.SubtypeChallenge, Attributes: attrs,
+	}).MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal response: %v", err)
+	}
+	if len(raw) != 40 {
+		t.Fatalf("EAP response length = %d, want 40", len(raw))
 	}
 }
 

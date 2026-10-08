@@ -23,6 +23,9 @@ func parseIKEProposal(
 	if normalized == "" {
 		return nil, fmt.Errorf("empty IKE proposal")
 	}
+	if normalized == "vocat" {
+		return vocatIKEProposal(number, spi), nil
+	}
 	parts := strings.Split(normalized, "-")
 	if len(parts) != 3 && len(parts) != 4 {
 		return nil, fmt.Errorf("invalid IKE proposal %q, expected 3 or 4 parts", raw)
@@ -88,6 +91,9 @@ func parseESPProposal(
 	if normalized == "" {
 		return nil, fmt.Errorf("empty ESP proposal")
 	}
+	if normalized == "vocat" {
+		return vocatESPProposal(number, spi), nil
+	}
 	parts := strings.Split(normalized, "-")
 	if len(parts) < 1 || len(parts) > 3 {
 		return nil, fmt.Errorf("invalid ESP proposal %q, expected 1 to 3 parts", raw)
@@ -125,6 +131,45 @@ func parseESPProposal(
 	}
 	proposal.AddTransform(ikev2.TransformTypeESN, 0, 0)
 	return proposal, nil
+}
+
+// vocatIKEProposal is the single multi-transform IKE offer used by VoCat's
+// modern profile: AES-CBC 128 then 256, PRF SHA-256 then SHA-1, integrity
+// SHA-256-128 then SHA-1-96, and MODP 2048.
+func vocatIKEProposal(number uint8, spi []byte) *ikev2.Proposal {
+	proposal := ikev2.NewProposal(number, ikev2.ProtoIKE, spi)
+	proposal.AddTransformWithKeyLen(ikev2.TransformTypeEncr, ikev2.ENCR_AES_CBC, 128)
+	proposal.AddTransformWithKeyLen(ikev2.TransformTypeEncr, ikev2.ENCR_AES_CBC, 256)
+	proposal.AddTransform(ikev2.TransformTypePRF, ikev2.PRF_HMAC_SHA2_256, 0)
+	proposal.AddTransform(ikev2.TransformTypePRF, ikev2.PRF_HMAC_SHA1, 0)
+	proposal.AddTransform(ikev2.TransformTypeInteg, ikev2.AUTH_HMAC_SHA2_256_128, 0)
+	proposal.AddTransform(ikev2.TransformTypeInteg, ikev2.AUTH_HMAC_SHA1_96, 0)
+	proposal.AddTransform(ikev2.TransformTypeDH, ikev2.MODP_2048_bit, 0)
+	return proposal
+}
+
+// vocatESPProposal is VoCat's modern ESP offer: AES-CBC 128 then 256,
+// integrity SHA-256-128 then SHA-1-96, and ESN disabled. It has no DH group.
+func vocatESPProposal(number uint8, spi []byte) *ikev2.Proposal {
+	proposal := ikev2.NewProposal(number, ikev2.ProtoESP, spi)
+	proposal.AddTransformWithKeyLen(ikev2.TransformTypeEncr, ikev2.ENCR_AES_CBC, 128)
+	proposal.AddTransformWithKeyLen(ikev2.TransformTypeEncr, ikev2.ENCR_AES_CBC, 256)
+	proposal.AddTransform(ikev2.TransformTypeInteg, ikev2.AUTH_HMAC_SHA2_256_128, 0)
+	proposal.AddTransform(ikev2.TransformTypeInteg, ikev2.AUTH_HMAC_SHA1_96, 0)
+	proposal.AddTransform(ikev2.TransformTypeESN, 0, 0)
+	return proposal
+}
+
+func usesVocatHandshake(cfg *Config) bool {
+	if cfg == nil {
+		return false
+	}
+	for _, raw := range cfg.IKEProposals {
+		if normalizeProposal(raw) == "vocat" {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeProposal(raw string) string {

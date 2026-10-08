@@ -63,6 +63,9 @@ func applyCarrierOverride(preset CarrierPreset, override CarrierOverride) Carrie
 	if len(override.ESPProposals) > 0 {
 		preset.ESPProposals = cloneStrings(override.ESPProposals)
 	}
+	if len(override.CPRequestAttributes) > 0 {
+		preset.CPRequestAttributes = cloneUint16s(override.CPRequestAttributes)
+	}
 	setStringIfPresent(&preset.IMSDomain, override.IMSDomain)
 	setStringIfPresent(&preset.IMSRealm, override.IMSRealm)
 	setStringIfPresent(&preset.IMSRegistrar, override.IMSRegistrar)
@@ -103,6 +106,10 @@ func copyOverridePointers(preset *CarrierPreset, override CarrierOverride) {
 	if override.IKEAuthMinimal != nil {
 		value := *override.IKEAuthMinimal
 		preset.IKEAuthMinimal = &value
+	}
+	if override.OmitIKEFragmentNotifies != nil {
+		value := *override.OmitIKEFragmentNotifies
+		preset.OmitIKEFragmentNotifies = &value
 	}
 	if override.NATKeepaliveSeconds != nil {
 		value := *override.NATKeepaliveSeconds

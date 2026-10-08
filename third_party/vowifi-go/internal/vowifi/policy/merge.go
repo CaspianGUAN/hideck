@@ -93,6 +93,7 @@ func mergePresetIKE(config *EffectiveCarrierConfig, preset CarrierPreset) {
 	}
 	applyBoolPtr(&config.DeviceIdentityEnabled, preset.DeviceIdentityEnabled)
 	applyBoolPtr(&config.IKEAuthMinimal, preset.IKEAuthMinimal)
+	applyBoolPtr(&config.OmitIKEFragmentNotifies, preset.OmitIKEFragmentNotifies)
 	applyBoolPtr(&config.EnableLegacyCiphers, preset.EnableLegacyCiphers)
 	if len(preset.AllowedLegacyCiphers) > 0 {
 		config.AllowedLegacyCiphers = normalizeStringList(preset.AllowedLegacyCiphers)
@@ -102,6 +103,9 @@ func mergePresetIKE(config *EffectiveCarrierConfig, preset CarrierPreset) {
 	}
 	if len(preset.ESPProposals) > 0 {
 		config.ESPProposals = normalizeStringList(preset.ESPProposals)
+	}
+	if len(preset.CPRequestAttributes) > 0 {
+		config.CPRequestAttributes = cloneUint16s(preset.CPRequestAttributes)
 	}
 	if preset.DPDKeepaliveIntervalSeconds > 0 {
 		config.DPDKeepaliveIntervalSeconds = clampIR51DPDInterval(preset.DPDKeepaliveIntervalSeconds)

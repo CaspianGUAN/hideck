@@ -33,6 +33,10 @@ const (
 	P_CSCF_IP4_ADDRESS         uint16 = 20
 	P_CSCF_IP6_ADDRESS         uint16 = 21
 	ASSIGNED_PCSCF_IP6_ADDRESS uint16 = 16390
+	// Private P-CSCF types used by ePDGs that predate RFC 7651 types 20/21.
+	// AIS (520/03) returns each IPv6 P-CSCF as type 16386, 16 bytes.
+	P_CSCF_IP4_ADDRESS_PRIV uint16 = 16384
+	P_CSCF_IP6_ADDRESS_PRIV uint16 = 16386
 )
 
 const (
@@ -185,7 +189,7 @@ func (c *CPConfig) addAttribute(attribute *CPAttribute) {
 		c.IPv4Addresses = appendIP(c.IPv4Addresses, value, net.IPv4len)
 	case INTERNAL_IP4_DNS:
 		c.IPv4DNS = appendIP(c.IPv4DNS, value, net.IPv4len)
-	case P_CSCF_IP4_ADDRESS:
+	case P_CSCF_IP4_ADDRESS, P_CSCF_IP4_ADDRESS_PRIV:
 		c.IPv4PCSCF = appendIP(c.IPv4PCSCF, value, net.IPv4len)
 	case INTERNAL_IP6_ADDRESS:
 		c.IPv6Addresses = appendIP(c.IPv6Addresses, value, net.IPv6len)
@@ -194,7 +198,7 @@ func (c *CPConfig) addAttribute(attribute *CPAttribute) {
 		}
 	case INTERNAL_IP6_DNS:
 		c.IPv6DNS = appendIP(c.IPv6DNS, value, net.IPv6len)
-	case P_CSCF_IP6_ADDRESS, ASSIGNED_PCSCF_IP6_ADDRESS:
+	case P_CSCF_IP6_ADDRESS, ASSIGNED_PCSCF_IP6_ADDRESS, P_CSCF_IP6_ADDRESS_PRIV:
 		c.IPv6PCSCF = appendIP(c.IPv6PCSCF, value, net.IPv6len)
 	}
 }

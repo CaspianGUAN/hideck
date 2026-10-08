@@ -7,6 +7,8 @@ import (
 
 	enginecrypto "github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
+	"github.com/iniwex5/vowifi-go/engine/logger"
+	"go.uber.org/zap"
 )
 
 const rekeyCooldown = 30 * time.Second
@@ -161,6 +163,9 @@ func (s *Session) handleIncomingCreateChildSAParsed(msgID uint32, payloads []ike
 	if err != nil {
 		return err
 	}
+	if err := s.narrowPeerRekeySA(payloads, protocolID); err != nil {
+		return s.rejectPeerRekeyProposal(msgID, err)
+	}
 	packet := &ikev2.IKEPacket{Header: newIKEHeader(
 		s.spiI, s.spiR, ikev2.CREATE_CHILD_SA, s.localIKEFlags(false)^ikeInitiatorFlag, msgID,
 	)}
@@ -179,19 +184,51 @@ func (s *Session) sendRekeyCollisionResponse(msgID uint32) error {
 	}, ikev2.CREATE_CHILD_SA, msgID)
 }
 
+func (s *Session) rejectPeerRekeyProposal(msgID uint32, reason error) error {
+	logger.Warn("rejecting peer CREATE_CHILD_SA without tearing down the SA", zap.Error(reason))
+	if err := s.sendEncryptedResponseWithMsgID([]ikev2.Payload{
+		&ikev2.EncryptedPayloadNotify{NotifyType: ikev2.NO_PROPOSAL_CHOSEN},
+	}, ikev2.CREATE_CHILD_SA, msgID); err != nil {
+		return err
+	}
+	return nil
+}
+
 func createChildSAProtocol(payloads []ikev2.Payload) (ikev2.ProtocolID, error) {
-	for _, payload := range payloads {
-		sa, ok := payload.(*ikev2.EncryptedPayloadSA)
-		if !ok || len(sa.Proposals) != 1 || sa.Proposals[0] == nil {
+	sa := createChildSAPayload(payloads)
+	if sa == nil {
+		return 0, errors.New("swu: CREATE_CHILD_SA request missing a single SA proposal")
+	}
+	var protocol ikev2.ProtocolID
+	for _, proposal := range sa.Proposals {
+		if proposal == nil {
 			continue
 		}
-		protocolID := sa.Proposals[0].ProtocolID
-		if protocolID != ikev2.ProtoIKE && protocolID != ikev2.ProtoESP {
-			return 0, fmt.Errorf("swu: unsupported CREATE_CHILD_SA protocol %d", protocolID)
+		if proposal.ProtocolID != ikev2.ProtoIKE && proposal.ProtocolID != ikev2.ProtoESP {
+			return 0, fmt.Errorf("swu: unsupported CREATE_CHILD_SA protocol %d", proposal.ProtocolID)
 		}
-		return protocolID, nil
+		if protocol == 0 {
+			protocol = proposal.ProtocolID
+			continue
+		}
+		if proposal.ProtocolID != protocol {
+			return 0, errors.New("swu: CREATE_CHILD_SA request mixes IKE and ESP proposals")
+		}
 	}
-	return 0, errors.New("swu: CREATE_CHILD_SA request missing a single SA proposal")
+	if protocol == 0 {
+		return 0, errors.New("swu: CREATE_CHILD_SA request missing a single SA proposal")
+	}
+	return protocol, nil
+}
+
+func createChildSAPayload(payloads []ikev2.Payload) *ikev2.EncryptedPayloadSA {
+	for _, payload := range payloads {
+		sa, ok := payload.(*ikev2.EncryptedPayloadSA)
+		if ok && sa != nil && len(sa.Proposals) > 0 {
+			return sa
+		}
+	}
+	return nil
 }
 
 func (s *Session) handleIncomingInformationalPacket(packet *ikev2.IKEPacket) error {

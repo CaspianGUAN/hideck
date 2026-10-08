@@ -101,6 +101,8 @@ func toInternalIKE(result *policy.EffectiveCarrierConfig, cfg carrier.EffectiveC
 	result.DeviceIdentityIMEI = cfg.DeviceIdentityIMEI
 	result.DeviceIdentityEnabled = cfg.DeviceIdentityEnabled
 	result.IKEAuthMinimal = cfg.IKEAuthMinimal
+	result.OmitIKEFragmentNotifies = cfg.OmitIKEFragmentNotifies
+	result.CPRequestAttributes = append([]uint16(nil), cfg.CPRequestAttributes...)
 	result.DeviceModel = cfg.DeviceModel
 	result.DPDKeepaliveIntervalSeconds = cfg.DPDKeepaliveIntervalSeconds
 	result.ReauthIntervalSeconds = cfg.ReauthIntervalSeconds
@@ -154,6 +156,8 @@ func fromInternalIKE(result *carrier.EffectiveCarrierConfig, cfg policy.Effectiv
 	result.DeviceIdentityIMEI = cfg.DeviceIdentityIMEI
 	result.DeviceIdentityEnabled = cfg.DeviceIdentityEnabled
 	result.IKEAuthMinimal = cfg.IKEAuthMinimal
+	result.OmitIKEFragmentNotifies = cfg.OmitIKEFragmentNotifies
+	result.CPRequestAttributes = append([]uint16(nil), cfg.CPRequestAttributes...)
 	result.DeviceModel = cfg.DeviceModel
 	result.DPDKeepaliveIntervalSeconds = cfg.DPDKeepaliveIntervalSeconds
 	result.ReauthIntervalSeconds = cfg.ReauthIntervalSeconds

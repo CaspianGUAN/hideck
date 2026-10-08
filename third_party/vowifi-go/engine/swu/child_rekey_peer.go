@@ -28,7 +28,7 @@ func (s *Session) handlePeerChildSARekeyPayloads(packet *ikev2.IKEPacket, payloa
 	peerTSr := retypeTrafficSelectorPayload(currentTSi, ikev2.PayloadTSr)
 	selection, err := validateChildSAResponse(payloads, childSAOffer{
 		encryption: s.espCipher, encryptionKeyBits: s.espEncKeyBits, integrity: s.espInteg,
-		dhGroup: s.currentChildDHGroup(), esn: s.espESN, tsi: peerTSi, tsr: peerTSr,
+		dhGroup: s.peerChildRekeyDHGroup(payloads), esn: s.espESN, tsi: peerTSi, tsr: peerTSr,
 		requireSA: true, requireNonce: true,
 	})
 	if err != nil {

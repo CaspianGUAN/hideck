@@ -128,6 +128,27 @@ func TestParseAssignedInnerConfigIgnoresEmptyAndTrailingPCSCFIPv6(t *testing.T) 
 	}
 }
 
+func TestParseAssignedInnerConfigAcceptsAISPrivatePCSCF(t *testing.T) {
+	inner := append(net.ParseIP("2001:44c8:4ca2:2dc3:1::a3e3:970a").To16(), 64)
+	first := net.ParseIP("2405:9800:9700:2081::2").To16()
+	second := net.ParseIP("2405:9800:9700:2391::").To16()
+	cp := &ikev2.EncryptedPayloadCP{
+		CFGType: ikev2.CFG_REPLY,
+		Attributes: []*ikev2.CPAttribute{
+			{Type: ikev2.INTERNAL_IP6_ADDRESS, Value: inner},
+			{Type: ikev2.P_CSCF_IP6_ADDRESS_PRIV, Value: first},
+			{Type: ikev2.P_CSCF_IP6_ADDRESS_PRIV, Value: second},
+		},
+	}
+	config, err := parseAssignedInnerConfig([]ikev2.Payload{cp})
+	if err != nil {
+		t.Fatalf("parseAssignedInnerConfig: %v", err)
+	}
+	if len(config.pcscf) != 2 || !config.pcscf[0].Equal(first) || !config.pcscf[1].Equal(second) {
+		t.Fatalf("P-CSCF = %v", config.pcscf)
+	}
+}
+
 func TestIKEAuthenticationErrorReportsAddressFailure(t *testing.T) {
 	wire := ikev2.EncodePayloadChain([]ikev2.Payload{
 		&ikev2.EncryptedPayloadNotify{NotifyType: 36},

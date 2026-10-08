@@ -8,6 +8,8 @@ import (
 
 	"github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
+	"github.com/iniwex5/vowifi-go/engine/logger"
+	"go.uber.org/zap"
 )
 
 func (s *Session) handleIKESAInitResp(data []byte) error {
@@ -217,6 +219,12 @@ func (s *Session) applySelectedIKEAlgorithms(selection selectedAlgorithms) error
 	s.prfAlg, s.prf = selection.prf, prf
 	s.integAlg, s.integKeyLen = selection.integrity, integrity.KeySize()
 	s.dhGroup, s.aead = selection.dh, encryption.aead
+	logger.Info("IKE_SA_INIT negotiated",
+		zap.String("encr", ikev2.EncrToString(selection.encryption)),
+		zap.Uint16("encr_bits", selection.keyBits),
+		zap.String("integ", ikev2.IntegToString(selection.integrity)),
+		zap.String("prf", ikev2.PRFToString(selection.prf)),
+		zap.String("dh", ikev2.DHToString(selection.dh)))
 	return nil
 }
 
