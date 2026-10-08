@@ -131,3 +131,40 @@ func TestVoiceCallStoreKeepsBothRecordsWhenQMISlotIsReused(t *testing.T) {
 		t.Fatalf("first inbound overwritten: %+v", records[1])
 	}
 }
+
+func TestVoiceCallStoreClearsMediaOfOldCalls(t *testing.T) {
+	database, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "calls.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.AutoMigrate(&VoiceCallRecord{}); err != nil {
+		t.Fatal(err)
+	}
+	store := NewVoiceCallStore(database)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	for _, record := range []phone.CallRecord{
+		{CallID: "old", DeviceID: "dev-1", Direction: "inbound", Status: phone.StatusCompleted,
+			StartedAt: now.AddDate(0, 0, -40), RecordingName: "old.wav", PCAPName: "old.pcap"},
+		{CallID: "new", DeviceID: "dev-1", Direction: "inbound", Status: phone.StatusCompleted,
+			StartedAt: now.AddDate(0, 0, -1), RecordingName: "new.wav", PCAPName: "new.pcap"},
+	} {
+		if err := store.Upsert(ctx, record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cleared, err := store.ClearMediaBefore(ctx, now.AddDate(0, 0, -30))
+	if err != nil || cleared != 1 {
+		t.Fatalf("cleared=%d err=%v", cleared, err)
+	}
+	records, err := store.List(ctx, 10)
+	if err != nil || len(records) != 2 {
+		t.Fatalf("records=%v err=%v", records, err)
+	}
+	for _, record := range records {
+		hasMedia := record.RecordingName != "" || record.PCAPName != ""
+		if (record.CallID == "old") == hasMedia {
+			t.Fatalf("record %s recording=%q pcap=%q", record.CallID, record.RecordingName, record.PCAPName)
+		}
+	}
+}

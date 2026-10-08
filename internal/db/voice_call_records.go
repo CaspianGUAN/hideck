@@ -62,6 +62,15 @@ func (store *VoiceCallStore) List(ctx context.Context, limit int) ([]phone.CallR
 	return records, nil
 }
 
+// ClearMediaBefore drops the recording and PCAP names of calls that started
+// before cutoff, once their files have been deleted.
+func (store *VoiceCallStore) ClearMediaBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+	result := store.database.WithContext(ctx).Model(&VoiceCallRecord{}).
+		Where("started_at < ? AND (recording_name <> '' OR pcap_name <> '')", cutoff).
+		Updates(map[string]any{"recording_name": "", "pcap_name": ""})
+	return result.RowsAffected, result.Error
+}
+
 func (store *VoiceCallStore) AbandonIncomplete(ctx context.Context, endedAt time.Time, reason string) error {
 	var models []VoiceCallRecord
 	err := store.database.WithContext(ctx).Where(

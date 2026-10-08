@@ -14,6 +14,8 @@ server:
   # 跨 NAT 时显式配置，例如 ["stun:stun.example.com:3478"]。
   ice_servers: []
   sms_rate_limit_disabled: false
+  # 通话录音与 PCAP 保留天数；过期文件自动删除，通话记录保留但不再链接录音。0 表示永久保留。
+  recording_retention_days: 30
 
 system:
   # 仅 OpenWrt 使用：把已拨号的数据网卡动态映射到 netifd，其他系统必须保持 false。

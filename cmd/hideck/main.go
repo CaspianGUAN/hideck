@@ -219,8 +219,9 @@ func main() {
 		Native:   pool.NativeVoLTEController(),
 		IsNative: pool.IsNativeVoLTE,
 	}
+	voiceCallStore := db.NewVoiceCallStore(db.DB)
 	phoneService, err := phone.NewService(phone.ServiceOptions{
-		Gateway: phoneGateway, Store: db.NewVoiceCallStore(db.DB), Transcoder: audioTranscoder,
+		Gateway: phoneGateway, Store: voiceCallStore, Transcoder: audioTranscoder,
 		Notifier: callResultNotifier, RecordingDir: voiceRecordingDirectory,
 		WebRTCUDPAddress: cfg.Server.WebRTCUDPAddress, WebRTCPublicHost: cfg.Server.WebRTCPublicHost,
 		ICEServers:     cfg.Server.ICEServers,
@@ -233,6 +234,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("初始化电话媒体服务失败: %v", err)
 	}
+	phone.StartRecordingRetention(context.Background(), phone.RecordingRetentionOptions{
+		Directory: voiceRecordingDirectory, Days: cfg.Server.RecordingRetentionDays,
+		ClearMedia: voiceCallStore.ClearMediaBefore,
+	})
 
 	apiServer := api.New(cfg, pool, staticFS, proxyMgr, voiceGW, notifyMgr, configPath)
 	if notifyMgr != nil {

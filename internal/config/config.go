@@ -196,6 +196,9 @@ type ServerConfig struct {
 	ICEServers           []string `mapstructure:"ice_servers"`
 	Debug                bool     `mapstructure:"debug"`
 	SMSRateLimitDisabled bool     `mapstructure:"sms_rate_limit_disabled"`
+	// RecordingRetentionDays deletes call recordings and PCAPs older than this
+	// many days and clears their names from the call records. 0 keeps them.
+	RecordingRetentionDays int `mapstructure:"recording_retention_days"`
 }
 
 type ESIMSwitchConfig struct {
@@ -397,6 +400,7 @@ func Load(path string) (*Config, error) {
 	viper.SetDefault("server.webrtc_udp_address", ":7580")
 	viper.SetDefault("server.webrtc_public_host", "")
 	viper.SetDefault("server.tls_data_dir", "data/tls")
+	viper.SetDefault("server.recording_retention_days", 30)
 	viper.SetDefault("vowifi.enabled", false)
 	viper.SetDefault("vowifi.mode", "vowifi")
 	viper.SetDefault("imscore.use_sipgo_udp", false)
