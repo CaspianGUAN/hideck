@@ -35,6 +35,8 @@ const activeNotifyTab = ref('telegram')
 const openWRTDynamicInterfaces = ref(false)
 const loadingSystemSettings = ref(false)
 const savingSystemSettings = ref(false)
+const recordingRetentionDays = ref(30)
+const savingRecordingRetention = ref(false)
 const passwordStatus = ref<PasswordCredentialStatus | null>(null)
 const loadingPasswordStatus = ref(false)
 const passwordManagedByEnvironment = computed(() => passwordStatus.value?.management === 'environment')
@@ -136,6 +138,24 @@ async function loadSystemSettings() {
     return
   }
   openWRTDynamicInterfaces.value = !!result.data.openwrt_dynamic_interfaces
+}
+
+async function loadRecordingSettings() {
+  const result = await systemService.getRecordingSettings()
+  if (result.ok) recordingRetentionDays.value = result.data.recording_retention_days
+}
+
+async function updateRecordingRetention(value: number | undefined) {
+  const days = Math.max(0, Math.round(Number(value ?? 0)))
+  savingRecordingRetention.value = true
+  const result = await systemService.saveRecordingSettings(days)
+  savingRecordingRetention.value = false
+  if (!result.ok) {
+    ElMessage.error(result.error.message || '录音保留天数更新失败')
+    loadRecordingSettings()
+    return
+  }
+  ElMessage.success(days === 0 ? '通话录音将永久保留' : `通话录音保留 ${days} 天`)
 }
 
 async function updateOpenWRTDynamicInterfaces(value: string | number | boolean) {
@@ -424,6 +444,7 @@ onMounted(() => {
   loadNotifications()
   loadSystemInfo()
   loadSystemSettings()
+  loadRecordingSettings()
   loadPasswordStatus()
 })
 
@@ -613,6 +634,20 @@ onMounted(() => {
                 :loading="loadingSystemSettings || savingSystemSettings"
                 :disabled="loadingSystemSettings || savingSystemSettings"
                 @change="updateOpenWRTDynamicInterfaces"
+              />
+            </div>
+            <div class="border-t border-[var(--ui-border)] pt-4 flex items-center justify-between gap-4">
+              <div class="min-w-0">
+                <div class="text-sm font-bold text-[var(--ui-text)]">通话录音保留天数</div>
+                <div class="text-xs text-[var(--ui-muted)]">过期录音与 PCAP 自动删除；0 表示永久保留</div>
+              </div>
+              <el-input-number
+                v-model="recordingRetentionDays"
+                :min="0"
+                :max="3650"
+                :step="1"
+                :disabled="savingRecordingRetention"
+                @change="updateRecordingRetention"
               />
             </div>
          </div>

@@ -290,6 +290,18 @@ export const systemService = {
       return true
     })
   },
+  getRecordingSettings() {
+    return callService(async () => {
+      const res = await api.get<{ recording_retention_days: number }>('/settings/recordings')
+      return res.data
+    })
+  },
+  saveRecordingSettings(days: number) {
+    return callService(async () => {
+      await api.put('/settings/recordings', { recording_retention_days: days })
+      return true
+    })
+  },
   getPasswordStatus() {
     return callService(async () => {
       const res = await api.get<PasswordCredentialStatus>('/settings/password')

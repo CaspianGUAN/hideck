@@ -82,7 +82,8 @@ type Server struct {
 	auth                    config.WebConfig // Web 认证配置
 	fs                      http.FileSystem  // 静态文件系统
 	configPath              string           // 配置文件路径
-	proxyMgr                *server.Manager  // 代理实例管理器
+	recordingRetention      *phone.RecordingRetention
+	proxyMgr                *server.Manager // 代理实例管理器
 	trafficRT               realtimeTrafficSubscriber
 	proxyRepo               repo.ProxyInstanceRepository
 	proxySyncMu             sync.Mutex
@@ -217,6 +218,11 @@ func (s *Server) SetRealtimeTraffic(m *proxytraffic.RealtimeManager) {
 // SetVoiceRecordingDirectory injects the directory owned by the voice gateway.
 func (s *Server) SetVoiceRecordingDirectory(directory string) {
 	s.voiceRecordingDirectory = strings.TrimSpace(directory)
+}
+
+// SetRecordingRetention lets the settings API change the recording cleanup.
+func (s *Server) SetRecordingRetention(retention *phone.RecordingRetention) {
+	s.recordingRetention = retention
 }
 
 func (s *Server) SetPhoneService(service *phone.Service) {
@@ -378,6 +384,8 @@ func (s *Server) newRouter() *gin.Engine {
 		api.PUT("/settings/notifications", s.handleUpdateNotificationSettings) // 更新通知设置
 		api.GET("/settings/system", s.handleGetSystemSettings)
 		api.PUT("/settings/system", s.handleUpdateSystemSettings)
+		api.GET("/settings/recordings", s.handleGetRecordingSettings)
+		api.PUT("/settings/recordings", s.handleUpdateRecordingSettings)
 		api.GET("/settings/disclaimer", s.handleGetDisclaimerStatus)
 		api.PUT("/settings/disclaimer", s.handleAcceptDisclaimer)
 		api.GET("/settings/password", s.handleGetPasswordStatus)

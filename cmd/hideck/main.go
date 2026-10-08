@@ -234,7 +234,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("初始化电话媒体服务失败: %v", err)
 	}
-	phone.StartRecordingRetention(context.Background(), phone.RecordingRetentionOptions{
+	recordingRetention := phone.StartRecordingRetention(context.Background(), phone.RecordingRetentionOptions{
 		Directory: voiceRecordingDirectory, Days: cfg.Server.RecordingRetentionDays,
 		ClearMedia: voiceCallStore.ClearMediaBefore,
 	})
@@ -245,6 +245,7 @@ func main() {
 	}
 	apiServer.SetVoiceRecordingDirectory(voiceRecordingDirectory)
 	apiServer.SetPhoneService(phoneService)
+	apiServer.SetRecordingRetention(recordingRetention)
 	apiServer.SetRealtimeTraffic(realtimeTraffic)
 	sipClients := startSIPClients(cfg, phoneService, pool)
 
