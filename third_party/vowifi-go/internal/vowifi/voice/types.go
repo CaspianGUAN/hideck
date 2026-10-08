@@ -139,6 +139,12 @@ type Call struct {
 	sessionMinSE     int
 	localHold        bool
 	remoteHold       bool
+
+	inboundReliable100rel      bool
+	inboundPreconditions       bool
+	inboundPRACK               chan struct{}
+	inboundPreconditionPending bool
+	inboundPreconditionWait    chan struct{}
 }
 
 // Gateway bridges the local client (LAN side) to the IMS network. It owns

@@ -148,6 +148,22 @@ func (r *RTPRelay) SetRemoteAddr(target any, ports ...int) error {
 	return nil
 }
 
+func (r *RTPRelay) adoptIMSSource(source *net.UDPAddr) {
+	if r == nil || source == nil {
+		return
+	}
+	adopted := cloneUDPAddr(source)
+	r.remoteAddr.Store(adopted)
+	r.remoteAddrRTCP.Store(offsetUDPAddr(adopted, 1))
+	r.mu.Lock()
+	r.imsRemote = cloneUDPAddr(adopted)
+	r.mu.Unlock()
+}
+
+func sameUDPAddr(left, right *net.UDPAddr) bool {
+	return left != nil && right != nil && left.IP.Equal(right.IP) && left.Port == right.Port && left.Zone == right.Zone
+}
+
 // SetClientAddr accepts an original host/port pair or an additive UDPAddr.
 func (r *RTPRelay) SetClientAddr(target any, ports ...int) error {
 	addr, err := resolveMediaAddr(target, ports...)

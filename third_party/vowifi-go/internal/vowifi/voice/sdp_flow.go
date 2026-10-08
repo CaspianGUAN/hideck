@@ -147,7 +147,7 @@ func ProcessOutgoingClientSDP(call *Call, raw []byte, localIP string) ([]byte, e
 	if err == nil && info != nil {
 		_ = relay.SetClientAddr(info.ConnectionIP, info.MediaPort)
 	}
-	return RewriteSDP(raw, localIP, relay.IMSPort()), nil
+	return []byte(shapeIMSSDP(string(RewriteSDP(raw, localIP, relay.IMSPort())))), nil
 }
 
 func callRTPRelay(call *Call) (*media.RTPRelay, error) {

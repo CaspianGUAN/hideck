@@ -58,6 +58,85 @@ func advertiseEstablishedSessionQoS(sdp string) string {
 	return rewritten.String()
 }
 
+// ensureTerminatingPreconditions adds the terminating QoS answer. Local
+// resources are already available on Wi-Fi. Remote current status is copied
+// from the offerer's local current status.
+func ensureTerminatingPreconditions(offer, answer string) string {
+	if strings.TrimSpace(answer) == "" || sdpHasPreconditions(answer) {
+		return answer
+	}
+	remote := sdpQoSCurrent(offer, "local")
+	if remote == "" {
+		remote = "none"
+	}
+	qos := "a=curr:qos local sendrecv\r\n" +
+		"a=curr:qos remote " + remote + "\r\n" +
+		"a=des:qos mandatory local sendrecv\r\n" +
+		"a=des:qos mandatory remote sendrecv\r\n"
+	return insertAudioQoS(answer, qos)
+}
+
+func insertAudioQoS(sdp, qos string) string {
+	lines := splitSDPTextLines(sdp)
+	audioIndex := -1
+	for index, line := range lines {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "m=audio ") {
+			audioIndex = index
+			break
+		}
+	}
+	if audioIndex < 0 {
+		return sdp
+	}
+	insertAt := len(lines)
+	for index := audioIndex + 1; index < len(lines); index++ {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(lines[index])), "m=") {
+			insertAt = index
+			break
+		}
+	}
+	qosLines := splitSDPTextLines(qos)
+	result := make([]string, 0, len(lines)+len(qosLines))
+	result = append(result, lines[:insertAt]...)
+	result = append(result, qosLines...)
+	result = append(result, lines[insertAt:]...)
+	return strings.Join(result, "\r\n") + "\r\n"
+}
+
+func refreshTerminatingRemoteQoS(sdp, remoteCurrent string) string {
+	if !sdpHasPreconditions(sdp) {
+		return sdp
+	}
+	remoteCurrent = strings.ToLower(strings.TrimSpace(remoteCurrent))
+	if remoteCurrent == "" {
+		remoteCurrent = "none"
+	}
+	var rewritten strings.Builder
+	for _, source := range splitSDPTextLines(sdp) {
+		line := strings.TrimRight(source, "\r")
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "a=curr:qos remote ") {
+			line = "a=curr:qos remote " + remoteCurrent
+		}
+		rewritten.WriteString(line)
+		rewritten.WriteString("\r\n")
+	}
+	return rewritten.String()
+}
+
+// inboundOffererQoSPending reports that the offerer has not reserved the
+// resources its own mandatory local precondition requires.
+func inboundOffererQoSPending(offer string) bool {
+	if !sdpHasPreconditions(offer) {
+		return false
+	}
+	current, mandatory := parseSDPQoSStatus(offer)
+	desired := mandatory["local"]
+	if desired == 0 {
+		return false
+	}
+	return current["local"]&desired != desired
+}
+
 func ensureOriginatingPreconditions(sdp string) string {
 	if strings.TrimSpace(sdp) == "" || sdpHasPreconditions(sdp) {
 		return sdp

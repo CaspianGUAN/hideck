@@ -115,6 +115,19 @@ func codecPTMapping(remote, client *SDPInfo) map[int]int {
 	// to one IMS payload type only; otherwise the reverse (uplink) mapping picks
 	// a variant at random and the far end cannot decode our frames.
 	claimed := make(map[int]struct{})
+	// A client payload type the IMS side already uses unchanged is taken.
+	// AIS offers AMR-WB as 101 and again as 112; the answer keeps 101, and
+	// without this claim 112 mapped onto 101, so every uplink packet left as
+	// 112 and the far end heard nothing.
+	for _, remoteCodec := range remote.Codecs {
+		if remoteCodec.PayloadType < dynamicPayloadStart {
+			continue
+		}
+		if clientCodec := findMatchingClientCodec(client, remoteCodec); clientCodec != nil &&
+			clientCodec.PayloadType == remoteCodec.PayloadType {
+			claimed[clientCodec.PayloadType] = struct{}{}
+		}
+	}
 	for _, remoteCodec := range remote.Codecs {
 		if remoteCodec.PayloadType < dynamicPayloadStart {
 			continue

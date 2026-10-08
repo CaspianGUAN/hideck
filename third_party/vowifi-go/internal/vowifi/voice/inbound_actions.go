@@ -3,9 +3,11 @@ package voice
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
 )
 
@@ -28,17 +30,43 @@ func (a *Agent) AnswerWithSDP(callID, clientSDP string) (InboundAnswer, error) {
 	if err != nil {
 		return InboundAnswer{}, err
 	}
+	_, imsAnswer := call.localSDPs()
+	reliable, precondition := call.inboundEarlyAnswerMode()
+	if precondition {
+		imsAnswer = ensureTerminatingPreconditions(call.remoteSDPValue(), imsAnswer)
+		clientLocal, _ := call.localSDPs()
+		call.setLocalSDP(clientLocal, imsAnswer)
+	}
 	a.enableMediaMonitor(call)
 	if err := call.StartMediaCurrent(); err != nil {
 		a.releaseInboundCall(call, err, false)
 		return InboundAnswer{}, err
 	}
-	_, imsAnswer := call.localSDPs()
+	if reliable || precondition {
+		prackCh, updateCh, err := a.sendInboundEarlyAnswer(call, imsAnswer, reliable, precondition)
+		if err != nil {
+			a.releaseInboundCall(call, err, false)
+			return InboundAnswer{}, err
+		}
+		call.inboundDecisionMu.Unlock()
+		waitErr := waitInboundAnswerGates(call, prackCh, updateCh)
+		call.inboundDecisionMu.Lock()
+		if waitErr != nil {
+			a.releaseInboundCall(call, waitErr, false)
+			return InboundAnswer{}, waitErr
+		}
+		if call.CallDirection() != callstate.DirectionInbound || call.IsTerminalState() {
+			return InboundAnswer{}, errors.New("voice: inbound call is not alerting")
+		}
+		_, imsAnswer = call.localSDPs()
+	}
 	structured, err := a.answerStoredServerInvite(call, imsAnswer)
 	if err != nil {
 		a.releaseInboundCall(call, err, false)
 		return InboundAnswer{}, err
 	}
+	logging.Info("IMS 来电应答", "call_id", call.CallID(),
+		"offer", sdpLogValue(call.remoteSDPValue()), "answer", sdpLogValue(imsAnswer))
 	if !structured {
 		if err := responder.Respond(a.voiceSDPResponse(call, 200, imsAnswer)); err != nil {
 			a.releaseInboundCall(call, err, false)
@@ -158,10 +186,12 @@ func (a *Agent) releaseInboundCall(call *Call, cause error, canceled bool) {
 	a.reportCallCleanupError(call, cleanupErr)
 }
 
-func (a *Agent) handleInboundBye(call *Call) (imscore.InboundVoiceResult, error) {
+func (a *Agent) handleInboundBye(request imscore.InboundVoiceRequest, call *Call) (imscore.InboundVoiceResult, error) {
 	if call == nil {
 		return voiceResult(481), nil
 	}
+	logging.Info("IMS 来电收到 BYE", "call_id", call.CallID(), "state", call.CallState().String(),
+		"ack_seen", call.IsACKSent(), "reason", requestHeaderValue(request.Request, "Reason"))
 	call.stopTUECWTimer()
 	call.inboundDecisionMu.Lock()
 	defer call.inboundDecisionMu.Unlock()
@@ -200,4 +230,9 @@ func (a *Agent) rejectAlertingInvite(call *Call, statusCode int) error {
 
 func voiceResult(status int) imscore.InboundVoiceResult {
 	return imscore.InboundVoiceResult{Handled: true, StatusCode: status}
+}
+
+// sdpLogValue keeps an SDP on one log line.
+func sdpLogValue(sdp string) string {
+	return strings.Join(splitSDPTextLines(strings.TrimSpace(sdp)), " | ")
 }

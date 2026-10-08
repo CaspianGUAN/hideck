@@ -103,6 +103,13 @@ func (a *Agent) applyInboundAnswer(call *Call, answer string) (InboundAnswer, er
 		return InboundAnswer{}, err
 	}
 	ExtractAndApplyPTMapping(call, []byte(call.remoteSDPValue()))
+	// The offer may list several telephone-event forms. Send DTMF with the
+	// one this answer selected.
+	if info, parseErr := ParseSDP(imsAnswer); parseErr == nil {
+		if err := configureRelayDTMF(relay, info); err != nil {
+			return InboundAnswer{}, err
+		}
+	}
 	call.setLocalSDP(answer, string(imsAnswer))
 	markLocalSDPSessionEstablished(call)
 	return InboundAnswer{CallID: call.CallID(), OfferSDP: call.clientRemoteSDPValue(), State: call.CallState().String()}, nil
@@ -126,6 +133,7 @@ func (a *Agent) prepareOutboundMedia(call *Call, clientOffer string) (string, er
 		relay.Stop()
 		return "", err
 	}
+	imsOffer = []byte(preferRegionalG711(string(imsOffer), homeMCCFromDomain(a.imsSnapshot().Realm)))
 	imsOffer = []byte(ensureOriginatingPreconditions(string(imsOffer)))
 	call.setLocalSDP(clientOffer, string(imsOffer))
 	return string(imsOffer), nil

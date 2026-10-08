@@ -7,6 +7,7 @@ import (
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
 )
 
@@ -53,7 +54,7 @@ func (a *Agent) HandleInboundVoiceRequest(request imscore.InboundVoiceRequest) (
 	case "INVITE":
 		return a.handleInboundInvite(request, call)
 	case "BYE":
-		return a.handleInboundBye(call)
+		return a.handleInboundBye(request, call)
 	case "CANCEL":
 		return a.handleInboundCancel(request, call)
 	case "ACK":
@@ -65,7 +66,10 @@ func (a *Agent) HandleInboundVoiceRequest(request imscore.InboundVoiceRequest) (
 		if call == nil {
 			return voiceResult(481), nil
 		}
-		call.MarkReliableProvisional(call.Timers.RSeq)
+		rseq := prackRequestRSeq(request)
+		if call.noteInboundPRACK(rseq) {
+			logging.Info("IMS 来电收到 PRACK", "call_id", call.CallID(), "rseq", rseq)
+		}
 		return voiceResult(200), nil
 	case "UPDATE":
 		return a.handleInboundUpdate(request, call)
@@ -160,7 +164,17 @@ func (a *Agent) beginInboundInvite(call *Call, request imscore.InboundVoiceReque
 		return 488, nil
 	}
 	call.storeHistoryInfo(parseHistoryInfoHeader(request.HistoryInfo, request.Request))
-	if err := a.respondInboundProvisional(call, 180); err != nil {
+	reliable, precondition := inboundEarlyAnswerRequested(request)
+	call.setInboundEarlyAnswer(reliable, precondition)
+	logging.Info("IMS 来电 INVITE", "call_id", call.CallID(),
+		"require", strings.TrimSpace(request.Require), "supported", strings.TrimSpace(request.Supported),
+		"reliable", reliable, "precondition", precondition)
+	if request.Request != nil {
+		logging.Info("IMS 来电 INVITE 原文", "call_id", call.CallID(), "sip", sipLogValue(request.Request.String()))
+	}
+	if reliable || precondition {
+		logging.Info("IMS 来电等待可靠应答", "call_id", call.CallID(), "reliable", reliable, "precondition", precondition)
+	} else if err := a.respondInboundProvisional(call, 180); err != nil {
 		a.releaseInboundCall(call, err, false)
 		return 0, err
 	}
@@ -206,7 +220,17 @@ func (a *Agent) handleInboundUpdate(request imscore.InboundVoiceRequest, call *C
 	if call == nil {
 		return voiceResult(481), nil
 	}
+	if earlyOutboundUpdate(call, request) {
+		return a.answerEarlyOutboundUpdate(request, call)
+	}
 	if len(request.Body) > 0 {
+		call.inboundDecisionMu.Lock()
+		if call.awaitingInboundPreconditions() {
+			result, err := a.acceptInboundPreconditionUpdateLocked(request, call)
+			call.inboundDecisionMu.Unlock()
+			return result, err
+		}
+		call.inboundDecisionMu.Unlock()
 		a.applyCallPreconditions(call, string(request.Body))
 		return a.handleReinvite(request, call)
 	}

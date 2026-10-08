@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/emiago/sipgo/sip"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
 )
@@ -65,6 +66,14 @@ func (r *capturedVoiceResponder) lastResponse() imscore.InboundVoiceResponse {
 	return r.responses[len(r.responses)-1]
 }
 
+func (r *capturedVoiceResponder) snapshot() []imscore.InboundVoiceResponse {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]imscore.InboundVoiceResponse, len(r.responses))
+	copy(out, r.responses)
+	return out
+}
+
 func TestInboundCallAnswerRelaysRTPAndRemoteBYECleansUp(t *testing.T) {
 	agent := startedVoiceAgent(t)
 	imsPeer := listenVoiceUDP(t)
@@ -103,6 +112,126 @@ func TestInboundCallAnswerRelaysRTPAndRemoteBYECleansUp(t *testing.T) {
 	conn, _ := call.RTPRelay().GetIMSConnAndRemote()
 	if _, err := conn.WriteTo([]byte("closed"), imsPeer.LocalAddr()); err == nil {
 		t.Fatal("RTP socket remained writable after BYE")
+	}
+}
+
+func TestInbound100relPreconditionWaitsForPRACKBeforeFinalAnswer(t *testing.T) {
+	agent := startedVoiceAgent(t)
+	imsPeer := listenVoiceUDP(t)
+	responder := &capturedVoiceResponder{localTag: "local-tag"}
+	request := inboundAgentInvite("call-in-100rel", imsPeer, responder)
+	request.Require = "100rel, precondition"
+	request.Body = []byte(voiceSDP(imsPeer.LocalAddr().(*net.UDPAddr).Port) +
+		"a=curr:qos local sendrecv\r\n" +
+		"a=curr:qos remote none\r\n" +
+		"a=des:qos mandatory local sendrecv\r\n" +
+		"a=des:qos optional remote sendrecv\r\n")
+	result, err := agent.HandleInboundVoiceRequest(request)
+	if err != nil || result.StatusCode != 0 {
+		t.Fatalf("HandleInboundVoiceRequest result=%+v err=%v", result, err)
+	}
+	if got := responder.statuses(); len(got) != 0 {
+		t.Fatalf("provisional before answer = %v, want none", got)
+	}
+	client := listenVoiceUDP(t)
+	answerDone := make(chan error, 1)
+	go func() {
+		_, err := agent.AnswerWithSDP(request.CallID, voiceSDP(client.LocalAddr().(*net.UDPAddr).Port))
+		answerDone <- err
+	}()
+	waitVoiceStatuses(t, responder, 1)
+	early := responder.snapshot()[0]
+	if early.StatusCode != 183 || !sipHeaderHasToken(early.Require, "100rel") || early.RSeq == "" || !sdpHasPreconditions(string(early.Body)) {
+		t.Fatalf("early answer = status %d require %q rseq %q sdp %q", early.StatusCode, early.Require, early.RSeq, early.Body)
+	}
+	select {
+	case err := <-answerDone:
+		t.Fatalf("answer finished before PRACK: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	if got := responder.statuses(); fmt.Sprint(got) != "[183]" {
+		t.Fatalf("responses before PRACK = %v", got)
+	}
+	prack := sip.NewRequest(sip.PRACK, sip.Uri{Scheme: "sip", Host: "ims.example"})
+	prack.AppendHeader(sip.NewHeader("RAck", early.RSeq+" 1 INVITE"))
+	prackResult, err := agent.HandleInboundVoiceRequest(imscore.InboundVoiceRequest{
+		Method: "PRACK", CallID: request.CallID, Request: prack,
+	})
+	if err != nil || prackResult.StatusCode != 200 {
+		t.Fatalf("PRACK result=%+v err=%v", prackResult, err)
+	}
+	select {
+	case err := <-answerDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("answer did not finish after PRACK")
+	}
+	if got := fmt.Sprint(responder.statuses()); got != "[183 200]" {
+		t.Fatalf("responses = %s", got)
+	}
+	final := responder.lastResponse()
+	if string(final.Body) != string(early.Body) {
+		t.Fatalf("200 SDP =\n%s\n183 SDP =\n%s", final.Body, early.Body)
+	}
+	if !strings.Contains(string(final.Body), "a=curr:qos local sendrecv") {
+		t.Fatalf("final SDP missing local qos: %s", final.Body)
+	}
+}
+
+func TestInboundSupported100relOutsideAISKeeps180Then200(t *testing.T) {
+	agent := startedVoiceAgent(t)
+	imsPeer := listenVoiceUDP(t)
+	responder := &capturedVoiceResponder{localTag: "local-tag"}
+	request := inboundAgentInvite("call-in-supported-100rel", imsPeer, responder)
+	request.Supported = "timer,tdialog,100rel,histinfo"
+	result, err := agent.HandleInboundVoiceRequest(request)
+	if err != nil || result.StatusCode != 0 {
+		t.Fatalf("HandleInboundVoiceRequest result=%+v err=%v", result, err)
+	}
+	client := listenVoiceUDP(t)
+	if _, err := agent.AnswerWithSDP(request.CallID, voiceSDP(client.LocalAddr().(*net.UDPAddr).Port)); err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(responder.statuses()); got != "[180 200]" {
+		t.Fatalf("responses = %s", got)
+	}
+}
+
+func answerInboundAfterPRACK(
+	t *testing.T,
+	agent *Agent,
+	invite imscore.InboundVoiceRequest,
+	responder *capturedVoiceResponder,
+	clientSDP string,
+) {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() {
+		_, err := agent.AnswerWithSDP(invite.CallID, clientSDP)
+		done <- err
+	}()
+	waitVoiceStatuses(t, responder, 1)
+	early := responder.snapshot()[0]
+	if early.StatusCode != 183 || early.RSeq == "" {
+		t.Fatalf("early answer = status %d rseq %q", early.StatusCode, early.RSeq)
+	}
+	prack := sip.NewRequest(sip.PRACK, sip.Uri{Scheme: "sip", Host: "ims.example"})
+	prack.AppendHeader(sip.NewHeader("RAck", early.RSeq+" 1 INVITE"))
+	prackResult, err := agent.HandleInboundVoiceRequest(imscore.InboundVoiceRequest{
+		Method: "PRACK", CallID: invite.CallID, Request: prack,
+	})
+	if err != nil || prackResult.StatusCode != 200 {
+		t.Fatalf("PRACK result=%+v err=%v", prackResult, err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("answer did not finish after PRACK")
 	}
 }
 
@@ -366,6 +495,20 @@ func readVoicePacket(t *testing.T, conn *net.UDPConn) []byte {
 		t.Fatal(err)
 	}
 	return buffer[:n]
+}
+
+func waitVoiceStatuses(t *testing.T, responder *capturedVoiceResponder, count int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if len(responder.statuses()) >= count {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("responses = %v, want at least %d", responder.statuses(), count)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func assertNoZeroMediaPort(t *testing.T, sdp string) {

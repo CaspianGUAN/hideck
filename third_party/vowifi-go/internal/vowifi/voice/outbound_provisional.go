@@ -61,6 +61,10 @@ func (a *Agent) handleIMS1xxResponse(
 		if err := a.updateRemoteMedia(call, response); err != nil {
 			logging.WarnRate("ims-invite-provisional-sdp", "IMS INVITE 临时响应 SDP 处理失败",
 				"status", response.StatusCode, "err", err)
+		} else if !confirmed {
+			// Early media is negotiated. The client attaches now so RTP flows
+			// both ways before the answer; an SBC stops sending otherwise.
+			a.emitCallMediaUpdated(call)
 		}
 		if !confirmed {
 			remoteSDP := string(response.Body)
@@ -125,6 +129,7 @@ func logOutboundInviteRequest(raw string) {
 		"from_tag_kind", inviteTokenKind(fromTag),
 		"from_tag_len", len(fromTag),
 		"from_tag_suffix", inviteTokenSuffix(fromTag),
+		"sdp", sdpLogValue(body),
 	)
 }
 
@@ -239,6 +244,7 @@ func logOutboundInviteResponse(message string, response imscore.SIPResponse) {
 		"to_tag_kind", inviteTokenKind(toTag),
 		"to_tag_len", len(toTag),
 		"to_tag_suffix", inviteTokenSuffix(toTag),
+		"sdp", sdpLogValue(string(response.Body)),
 	)
 }
 

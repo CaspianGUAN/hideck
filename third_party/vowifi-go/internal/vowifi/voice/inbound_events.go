@@ -35,7 +35,7 @@ func isVoiceIMSEvent(event imsendpoint.Event) bool {
 	}
 	switch strings.ToLower(strings.TrimSpace(event.Kind)) {
 	case "request":
-		return method == "INVITE" || method == "BYE" || method == "CANCEL" || method == "UPDATE"
+		return method == "INVITE" || method == "BYE" || method == "CANCEL" || method == "UPDATE" || method == "PRACK"
 	case "response":
 		return method == "INVITE" || method == "PRACK"
 	default:
@@ -78,6 +78,8 @@ func (a *Agent) handleIMSEvent(event imsendpoint.Event) {
 		a.HandleIMSCancelEvent(event)
 	case "UPDATE":
 		a.HandleIMSUpdateEvent(event)
+	case "PRACK":
+		a.observeInboundPRACK(event)
 	}
 }
 
@@ -134,6 +136,7 @@ func inboundRequestFromEvent(
 		ReferTo:        requestHeaderValue(request, "Refer-To"),
 		ReferSub:       requestHeaderValue(request, "Refer-Sub"),
 		Supported:      requestHeaderValue(request, "Supported"),
+		Require:        requestHeaderValue(request, "Require"),
 		MinSE:          requestHeaderValue(request, "Min-SE"),
 		Replaces:       requestHeaderValue(request, "Replaces"),
 		HistoryInfo:    requestHeaderValue(request, "History-Info"),

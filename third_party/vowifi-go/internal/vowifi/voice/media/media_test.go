@@ -40,6 +40,60 @@ func TestRTPRelayLifecycle(t *testing.T) {
 	}
 }
 
+func TestRTPRelayAdoptsUnmatchedIMSSource(t *testing.T) {
+	imsConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatalf("listen ims: %v", err)
+	}
+	lanConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatalf("listen lan: %v", err)
+	}
+	client, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatalf("listen client: %v", err)
+	}
+	sender, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatalf("listen sender: %v", err)
+	}
+	defer imsConn.Close()
+	defer lanConn.Close()
+	defer client.Close()
+	defer sender.Close()
+
+	relay := NewRTPRelay(imsConn, lanConn)
+	if err := relay.SetRemoteAddr("127.0.0.1", 9); err != nil {
+		t.Fatal(err)
+	}
+	if err := relay.SetClientAddr(client.LocalAddr().(*net.UDPAddr)); err != nil {
+		t.Fatal(err)
+	}
+	if err := relay.StartCurrent(); err != nil {
+		t.Fatal(err)
+	}
+	defer relay.Stop()
+
+	packet := []byte{0x80, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 1}
+	if _, err := sender.WriteToUDP(packet, imsConn.LocalAddr().(*net.UDPAddr)); err != nil {
+		t.Fatal(err)
+	}
+	buffer := make([]byte, 64)
+	_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
+	n, _, err := client.ReadFrom(buffer)
+	if err != nil {
+		t.Fatalf("read adopted packet: %v", err)
+	}
+	if n != len(packet) {
+		t.Fatalf("adopted packet len = %d, want %d", n, len(packet))
+	}
+	adopted := relay.remoteAddr.Load()
+	source := sender.LocalAddr().(*net.UDPAddr)
+	if adopted == nil || !adopted.IP.Equal(source.IP) || adopted.Port != source.Port {
+		t.Fatalf("IMS remote = %v, want %v", adopted, source)
+	}
+}
+
 func TestRTPMonitorOneWay(t *testing.T) {
 	m := NewRTPMonitor()
 	m.UpdateIMS()

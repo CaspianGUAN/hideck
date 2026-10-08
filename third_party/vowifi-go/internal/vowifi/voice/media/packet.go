@@ -18,11 +18,15 @@ func (r *RTPRelay) handleIMSPacket(packet []byte, source *net.UDPAddr) {
 	r.writePCAPPacket(packet, pcapDirectionIMSToLAN)
 	r.writeAudioPacket(packet)
 	remote := r.remoteAddr.Load()
-	if remote != nil && !remote.IP.Equal(source.IP) {
-		deviceID, _ := r.logContext()
-		logging.WarnRate("media-ims-source:"+deviceID, 5*time.Second,
-			"RTP IMS source does not match negotiated peer", "source", source, "expected", remote)
-		return
+	if !sameUDPAddr(remote, source) {
+		// The answered call often arrives from a different address than the
+		// SDP c= line. Sending to the old address leaves both sides silent.
+		if remote != nil && source != nil {
+			deviceID, _ := r.logContext()
+			logging.WarnRate("media-ims-source:"+deviceID, 5*time.Second,
+				"RTP IMS source adopted", "source", source.String(), "previous", remote.String())
+		}
+		r.adoptIMSSource(source)
 	}
 	client := r.clientAddr.Load()
 	if client == nil {
