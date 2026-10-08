@@ -42,8 +42,12 @@ type RealtimeCodec struct {
 	octetAligned bool
 	decoderState uintptr
 	encoderState uintptr
-	mu           sync.RWMutex
-	closed       bool
+	// mu serializes every native call. The C encoder and decoder states are
+	// not thread-safe, and a PBX call encodes keepalive silence and PBX audio
+	// from two goroutines at once; a shared lock let them corrupt the state
+	// and crash the process (AIS AMR-WB early media, sip61).
+	mu     sync.Mutex
+	closed bool
 }
 
 func (t *Transcoder) realtimeAPI(codec string) (*amrRealtimeAPI, error) {
@@ -99,8 +103,8 @@ func newRealtimeCodec(config realtimeCodecConfig, mode int) (*RealtimeCodec, err
 func (codec *RealtimeCodec) SampleRate() int { return codec.config.sampleRate }
 
 func (codec *RealtimeCodec) decodeStorageFrame(frame []byte, badFrame int) ([]int16, error) {
-	codec.mu.RLock()
-	defer codec.mu.RUnlock()
+	codec.mu.Lock()
+	defer codec.mu.Unlock()
 	if codec.closed {
 		return nil, errors.New("realtime codec is closed")
 	}
@@ -110,8 +114,8 @@ func (codec *RealtimeCodec) decodeStorageFrame(frame []byte, badFrame int) ([]in
 }
 
 func (codec *RealtimeCodec) encodeStorageFrame(pcm []int16) ([]byte, error) {
-	codec.mu.RLock()
-	defer codec.mu.RUnlock()
+	codec.mu.Lock()
+	defer codec.mu.Unlock()
 	if codec.closed {
 		return nil, errors.New("realtime codec is closed")
 	}
@@ -153,8 +157,8 @@ func (codec *RealtimeCodec) applyCMR(cmr int) {
 }
 
 func (codec *RealtimeCodec) Encode(pcm []int16) ([]byte, error) {
-	codec.mu.RLock()
-	defer codec.mu.RUnlock()
+	codec.mu.Lock()
+	defer codec.mu.Unlock()
 	if codec.closed {
 		return nil, errors.New("realtime codec is closed")
 	}
