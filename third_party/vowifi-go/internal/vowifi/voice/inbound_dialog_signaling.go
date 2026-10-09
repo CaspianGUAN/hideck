@@ -106,7 +106,8 @@ func (a *Agent) rejectStoredServerInviteWithReason(
 		response.AppendHeader(sip.NewHeader("Reason", `Q.850;cause=19;text="User alerting, no answer"`))
 	}
 	if statusCode > 100 && statusCode < 200 {
-		if a.applyAISHandsetHeaders(response, request, false) != nil {
+		handset := a.applyAISHandsetHeaders(response, request, false) != nil
+		if a.applyATTLocation(response, request) || handset {
 			logging.Info("IMS 来电临时响应原文", "call_id", call.CallID(), "sip", sipLogValue(response.String()))
 		}
 	}
