@@ -319,6 +319,8 @@ func (s *Service) sendOutboundSMSPart(
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		err = smsMESSAGERejectionError(response)
+		logging.Info("IMS SMS MESSAGE rejected", "device", s.DeviceID(), "message_id", messageID,
+			"part", part.number, "status", response.StatusCode, "err", err)
 		persistErr := s.persistOutboundSIPResult(
 			messageID, part.number, response.StatusCode, smsDeliveryStateFailed, err.Error(),
 		)

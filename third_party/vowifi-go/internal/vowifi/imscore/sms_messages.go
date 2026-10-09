@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/emiago/sipgo/sip"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 )
 
 const smsSupportedHeader = "path, 100rel, replaces, gruu"
@@ -75,8 +76,16 @@ func (s *Service) buildSMSMESSAGEWithOptions(options smsMESSAGEOptions) (string,
 	if pani := strings.TrimSpace(profile.PANI); pani != "" {
 		request.WriteString("P-Access-Network-Info: " + pani + "\r\n")
 	}
-	request.WriteString("P-Preferred-Service: " + imsSMSPreferredService + "\r\n")
-	request.WriteString("Accept-Contact: " + imsSMSAcceptContact + "\r\n")
+	handset := smsHandsetHeaders(s.cfg)
+	if handset {
+		// AT&T answers 403 to a MESSAGE that names the icsi.sms service in
+		// P-Preferred-Service; an iPhone sends only the smsip feature tag.
+		request.WriteString("Accept-Contact: *;+g.3gpp.smsip\r\n")
+		request.WriteString("Request-Disposition: no-fork\r\n")
+	} else {
+		request.WriteString("P-Preferred-Service: " + imsSMSPreferredService + "\r\n")
+		request.WriteString("Accept-Contact: " + imsSMSAcceptContact + "\r\n")
+	}
 	if userAgent := strings.TrimSpace(profile.UserAgent); userAgent != "" {
 		request.WriteString("User-Agent: " + userAgent + "\r\n")
 	}
@@ -89,13 +98,22 @@ func (s *Service) buildSMSMESSAGEWithOptions(options smsMESSAGEOptions) (string,
 	}
 	request.WriteString("Content-Type: " + contentType + "\r\n")
 	if normalizedContentType(contentType) == imsSMSContentType {
-		if !options.OmitBinaryCTE {
+		if !options.OmitBinaryCTE && !handset {
 			request.WriteString("Content-Transfer-Encoding: binary\r\n")
 		}
 	}
 	fmt.Fprintf(&request, "Content-Length: %d\r\n\r\n", len(options.Body))
 	request.Write(options.Body)
+	logging.Info("IMS SMS MESSAGE outbound", "device", s.DeviceID(), "request_uri", remoteURI,
+		"from", profile.LocalURI, "route", profile.ServiceRoute, "handset_headers", handset,
+		"body_bytes", len(options.Body))
 	return request.String(), nil
+}
+
+// smsHandsetHeaders reports a carrier whose MESSAGE must carry an iPhone's
+// SMS headers (TS 24.341: the +g.3gpp.smsip feature tag, no ICSI).
+func smsHandsetHeaders(cfg *IMSConfig) bool {
+	return cfg != nil && strings.HasPrefix(strings.ToLower(strings.TrimSpace(cfg.CarrierPresetID)), "att_")
 }
 
 func (s *Service) buildOutboundMESSAGE(remoteURI string, body []byte) (*sip.Request, error) {

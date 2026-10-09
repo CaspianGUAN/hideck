@@ -1208,6 +1208,8 @@ func (s *Server) handleSendSMS(c *gin.Context) {
 	}
 	messageID = strings.TrimSpace(routed.Outcome.MessageID)
 	if err != nil {
+		logger.Warn("短信发送失败", "device", deviceID, "phone", req.Phone,
+			"via", routed.Via, "fell_back_to_cs", routed.FellBackToCS, "err", err)
 		if routed.Via == device.RoutedSMSViaVoWiFi || routed.FellBackToCS {
 			deliveryState = "failed"
 			_ = device.RecordVoWiFiSMSSendFailure(s.pool, deviceID, req.Phone, req.Message, time.Now())
