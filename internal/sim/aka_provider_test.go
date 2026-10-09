@@ -272,8 +272,9 @@ func TestWrapPreferredAKAProviderReturnsSWUAKAProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CalculateAKA() error = %v", err)
 	}
-	if stub.lastPreferenceUsed != AKAAppPreferenceISIMStrict {
-		t.Fatalf("lastPreferenceUsed = %q, want %q", stub.lastPreferenceUsed, AKAAppPreferenceISIMStrict)
+	// SWu EAP-AKA runs on USIM even when the IMS identity comes from ISIM.
+	if stub.lastPreferenceUsed != AKAAppPreferenceUSIM {
+		t.Fatalf("lastPreferenceUsed = %q, want %q", stub.lastPreferenceUsed, AKAAppPreferenceUSIM)
 	}
 	if !reflect.DeepEqual(got, stub.result) {
 		t.Fatalf("CalculateAKA() = %+v, want %+v", got, stub.result)
@@ -303,4 +304,24 @@ func bytes16(start byte) []byte {
 		out[i] = start + byte(i)
 	}
 	return out
+}
+
+func TestWrapPreferredAKAProviderKeepsNonISIMPreferencesForSWu(t *testing.T) {
+	for _, preference := range []string{AKAAppPreferenceAuto, AKAAppPreferenceUSIM, AKAAppPreferenceUSIMStrict} {
+		stub := &akaWithPreferenceProviderStub{}
+		if _, err := WrapPreferredAKAProvider(stub, preference).CalculateAKA(bytes16(0x10), bytes16(0x20)); err != nil {
+			t.Fatal(err)
+		}
+		if stub.lastPreferenceUsed != preference {
+			t.Fatalf("%s: lastPreferenceUsed = %q", preference, stub.lastPreferenceUsed)
+		}
+	}
+	stub := &akaWithPreferenceProviderStub{}
+	wrapped := WrapPreferredAKAProvider(stub, AKAAppPreferenceISIMStrict)
+	if _, err := wrapped.(swusim.ISIMAKAProvider).CalculateISIMAKA(bytes16(0x10), bytes16(0x20)); err != nil {
+		t.Fatal(err)
+	}
+	if stub.lastPreferenceUsed != AKAAppPreferenceISIMStrict {
+		t.Fatalf("IMS ISIM AKA used %q", stub.lastPreferenceUsed)
+	}
 }

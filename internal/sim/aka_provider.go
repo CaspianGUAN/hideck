@@ -376,7 +376,22 @@ func WrapPreferredAKAProvider(p AKAWithPreferenceProvider, preference string) sw
 	if p == nil {
 		return nil
 	}
-	return preferredAKAAdapter{p: p, preference: strings.TrimSpace(preference)}
+	return preferredAKAAdapter{p: p, preference: swuAKAPreference(preference)}
+}
+
+// swuAKAPreference is the SIM application CalculateAKA uses. CalculateAKA
+// serves the SWu EAP-AKA, plus IMS AKA only when IMS does not use ISIM (an
+// ISIM IMS identity goes through CalculateISIMAKA). The ePDG builds its
+// EAP-AKA challenge from the USIM key (TS 33.402), so an ISIM preference
+// moves to USIM here: a Red Pocket (AT&T 310/280) SIM whose ISIM key differs
+// answered every SWu challenge with 98 62 (incorrect MAC).
+func swuAKAPreference(preference string) string {
+	preference = strings.TrimSpace(preference)
+	switch strings.ToLower(preference) {
+	case AKAAppPreferenceISIM, AKAAppPreferenceISIMStrict:
+		return AKAAppPreferenceUSIM
+	}
+	return preference
 }
 
 // CalculateAKA 代理调用底层的带偏好设置的 AKA 计算方法。
