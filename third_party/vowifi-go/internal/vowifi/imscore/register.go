@@ -759,8 +759,45 @@ func (s *Service) buildRegisterRequest(
 		b.WriteString("User-Agent: " + strings.TrimSpace(cfg.UserAgent) + "\r\n")
 	}
 	b.WriteString("Feature-Caps: " + registerFeatureCapsHeader + "\r\n")
+	if !options.unregister && !options.wildcard && !options.emergency {
+		if body, cid := registerLocationBody(cfg, time.Now()); body != "" {
+			// AT&T cancels MT calls with 480 "Invalid Location" unless the
+			// registration carries a PIDF-LO, as an iPhone's REGISTER does.
+			b.WriteString("Geolocation: <" + cid + ">\r\n")
+			b.WriteString("Geolocation-Routing: yes\r\n")
+			b.WriteString("Content-Type: application/pidf+xml\r\n")
+			fmt.Fprintf(&b, "Content-Length: %d\r\n\r\n%s", len(body), body)
+			return b.String()
+		}
+	}
 	b.WriteString("Content-Length: 0\r\n\r\n")
 	return b.String()
+}
+
+// registerLocationBody is the civic PIDF-LO an iPhone attaches to its AT&T
+// REGISTER (RFC 4119/6442): only the country, referenced by a cid: URI. It
+// returns "" for other carriers or when the country is unknown.
+func registerLocationBody(cfg *IMSConfig, now time.Time) (string, string) {
+	if cfg == nil || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(cfg.CarrierPresetID)), "att_") {
+		return "", ""
+	}
+	country := strings.ToUpper(strings.TrimSpace(cfg.PAccessNetworkCountry))
+	user, domain := strings.TrimSpace(cfg.IMSI), strings.TrimSpace(cfg.Domain)
+	if country == "" || user == "" || domain == "" {
+		return "", ""
+	}
+	entity := "sip:" + user + "@" + domain
+	cid := "cid:" + user + "@" + domain
+	body := `<?xml version="1.0"?>` + "\r\n" +
+		`<presence xmlns="urn:ietf:params:xml:ns:pidf" xmlns:dm="urn:ietf:params:xml:ns:pidf:data-model" ` +
+		`xmlns:gp="urn:ietf:params:xml:ns:pidf:geopriv10" xmlns:gml="http://www.opengis.net/gml" ` +
+		`xmlns:gs="http://www.opengis.net/pidflo/1.0" xmlns:cl="urn:ietf:params:xml:ns:pidf:geopriv10:civicAddr" ` +
+		`entity="` + entity + `">` + "\r\n" +
+		`<tuple id="Wifi">` + "\r\n<status>\r\n<gp:geopriv>\r\n<gp:location-info>\r\n<cl:civicAddress>\r\n" +
+		`<cl:country>` + country + `</cl:country>` + "\r\n</cl:civicAddress>\r\n</gp:location-info>\r\n" +
+		"<gp:usage-rules/>\r\n</gp:geopriv>\r\n</status>\r\n" +
+		`<dm:timestamp>` + now.UTC().Format("2006-01-02T15:04:05Z") + `</dm:timestamp>` + "\r\n</tuple>\r\n</presence>\r\n"
+	return body, cid
 }
 
 func (s *Service) registerContactOptions(session *registerSession) imsheaders.ContactOptions {
