@@ -23,6 +23,9 @@ const deviceTypographyFiles = [
   '../src/components/DeviceAtTab.vue',
   '../src/components/DeviceUssdTab.vue',
   '../src/components/DeviceConfigTab.vue',
+  '../src/components/MBNPanel.vue',
+  '../src/components/MBNFileLibrary.vue',
+  '../src/components/MBNPolicyEditor.vue',
   '../src/components/CardPolicyPanel.vue'
 ] as const
 const proxyTypographyFiles = [

@@ -87,7 +87,7 @@ func shouldRetryVoWiFiAutoStart(err error) bool {
 	if err == nil {
 		return false
 	}
-	return !carrier.IsVoWiFiPolicyBlockedError(err) && !IsLebaraUKPolicyError(err)
+	return !carrier.IsVoWiFiPolicyBlockedError(err) && !IsLebaraUKPolicyError(err) && !errors.Is(err, ErrModemVoiceSoftwareIMS)
 }
 
 func (p *Pool) scheduleVoWiFiAPDUBusyRecover(deviceID, overrideEPDG string, generation uint64) {

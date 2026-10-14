@@ -4,6 +4,8 @@ id: spark_nz_53005
 custom_epdg: epdg.epc.mnc005.mcc530.pub.3gppnetwork.spark.co.nz
 device_model: iphone15,4
 dpd_interval_seconds: 600
+withhold_device_identity: true
+keep_child_sa_on_rekey_decline: true
 ike_proposals:
   - aes256-sha256-prfsha256-modp2048
 esp_proposals:

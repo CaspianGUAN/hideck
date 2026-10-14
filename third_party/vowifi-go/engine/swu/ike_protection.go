@@ -118,7 +118,7 @@ func (s *Session) decryptAEADIKE(packet *ikev2.IKEPacket, encrypted *ikev2.Encry
 	}
 	raw, err := packet.Encode()
 	if err != nil {
-		return nil, fmt.Errorf("encode protected IKE packet: %w", err)
+		return nil, &localIKEError{fmt.Errorf("encode protected IKE packet: %w", err)}
 	}
 	aad := raw[:ikeHeaderLength+ikePayloadHeaderLength]
 	iv := encrypted.Data[:cipher.IVSize()]
@@ -129,7 +129,7 @@ func (s *Session) decryptAEADIKE(packet *ikev2.IKEPacket, encrypted *ikev2.Encry
 	}
 	plain, err := unpadIKEPlaintext(padded)
 	if err != nil {
-		return nil, err
+		return nil, &authenticatedSyntaxError{err: err}
 	}
-	return ikev2.DecodePayloadChainWithFirst(encrypted.NextPayload, plain)
+	return decodeAuthenticatedPayloads(encrypted.NextPayload, plain)
 }

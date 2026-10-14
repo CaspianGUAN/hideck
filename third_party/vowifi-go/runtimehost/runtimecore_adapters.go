@@ -163,6 +163,18 @@ func (adapter runtimeCoreDeliveryStoreAdapter) CreateSMSDelivery(
 	)
 }
 
+func (adapter runtimeCoreDeliveryStoreAdapter) CreateSMSDeliveryForIdentity(
+	record smsdelivery.DeliveryRecord,
+) error {
+	if store, ok := adapter.store.(messaging.IdentityDeliveryStore); ok {
+		return deliveryStoreErrorToInternal(store.CreateSMSDeliveryForIdentity(record))
+	}
+	return adapter.CreateSMSDelivery(
+		record.MessageID, record.IMSI, record.DeviceID,
+		record.Peer, record.Content, record.PartsTotal, record.At,
+	)
+}
+
 func (adapter runtimeCoreDeliveryStoreAdapter) UpsertSMSDeliveryPart(
 	messageID string,
 	partNo int,
@@ -222,7 +234,7 @@ func (adapter runtimeCoreDeliveryStoreAdapter) GetSMSDeliveryStatus(
 
 func runtimeCoreDeliveryStatus(status *messaging.DeliveryStatus) *smsdelivery.DeliveryStatus {
 	result := &smsdelivery.DeliveryStatus{
-		MessageID: status.MessageID, IMSI: status.IMSI, DeviceID: status.DeviceID,
+		MessageID: status.MessageID, IMSI: status.IMSI, ICCID: status.ICCID, DeviceID: status.DeviceID,
 		Peer: status.Peer, Content: status.Content, PartsTotal: status.PartsTotal,
 		Acks: status.Acks, State: status.State, LastError: status.LastError,
 		CreatedAt: status.CreatedAt, UpdatedAt: status.UpdatedAt,

@@ -25,6 +25,21 @@ func (s *MediaSession) forwardBrowserRTP(track *webrtc.TrackRemote) {
 		if err != nil {
 			return
 		}
+		count := s.browserPackets.Add(1)
+		if count == 1 {
+			logger.Info("浏览器首个音频包", "media_id", s.ID, "codec", track.Codec().MimeType, "payload_bytes", len(packet.Payload))
+		}
+		for _, sample := range decodePCMU(packet.Payload) {
+			magnitude := int64(sample)
+			if magnitude < 0 {
+				magnitude = -magnitude
+			}
+			for old := s.browserPeak.Load(); uint64(magnitude) > old; old = s.browserPeak.Load() {
+				if s.browserPeak.CompareAndSwap(old, uint64(magnitude)) {
+					break
+				}
+			}
+		}
 		s.forwardBrowserPacket(packet)
 	}
 }
@@ -36,8 +51,12 @@ func (s *MediaSession) forwardBrowserPacket(packet *rtp.Packet) {
 		return
 	}
 	s.recordMixedFrame(mixToIMS, packet.Payload)
+	payloadBytes := len(packet.Payload)
 	payload, err := browserPayloadForIMS(packet.Payload, endpoint, codec)
 	if err != nil {
+		if s.browserRejected.Add(1) == 1 {
+			logger.Warn("浏览器音频包未转发", "media_id", s.ID, "payload_bytes", payloadBytes, "err", err)
+		}
 		s.lost.Add(1)
 		return
 	}

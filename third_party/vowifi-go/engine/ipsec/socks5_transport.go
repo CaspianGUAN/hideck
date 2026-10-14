@@ -68,6 +68,7 @@ type Socks5Transport struct {
 	stopped        bool
 	startErr       error
 	lastUDPWriteAt int64
+	natT           bool // Protected by remoteMu; retained across peer port changes.
 }
 
 type socks5Connections struct {
@@ -222,9 +223,16 @@ func (t *Socks5Transport) RemotePort() int {
 
 func (t *Socks5Transport) SetRemotePort(port int) {
 	t.remoteMu.Lock()
+	t.natT = t.natT || t.remotePort == 4500 || port == 4500
 	t.remotePort = port
 	t.remoteMu.Unlock()
 	logDebug(fmt.Sprintf("SOCKS5 remote port set to %d for %s", port, t.cfg.DeviceID))
+}
+
+func (t *Socks5Transport) natTEnabled() bool {
+	t.remoteMu.RLock()
+	defer t.remoteMu.RUnlock()
+	return t.natT || t.remotePort == 4500
 }
 
 func (t *Socks5Transport) LocalAddrString() string {

@@ -11,6 +11,7 @@ import (
 
 func Normalize(value Profile) Profile {
 	return Profile{
+		ICCID:     strings.TrimSpace(value.ICCID),
 		IMSI:      strings.TrimSpace(value.IMSI),
 		MCC:       strings.TrimSpace(value.MCC),
 		MNC:       strings.TrimSpace(value.MNC),

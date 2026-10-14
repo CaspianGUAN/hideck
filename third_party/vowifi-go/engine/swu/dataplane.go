@@ -281,6 +281,8 @@ func (s *Session) decapsulateOuterESP(esp []byte) ([]byte, uint32, error) {
 	if err != nil {
 		return nil, spi, fmt.Errorf("decapsulate ESP packet: %w", err)
 	}
+	// Authenticated ESP proves the peer is alive even if selectors reject it.
+	s.markInboundActivity()
 	if !matchInboundSelectors(inner, s.childTSi, s.childTSr) {
 		return nil, spi, fmt.Errorf("swu: inbound inner packet is outside negotiated traffic selectors: %s",
 			describeSelectorMismatch(inner, s.childTSi, s.childTSr))

@@ -52,7 +52,8 @@ func (r *lateAcceptedRegistrar) serve() {
 		request := string(buffer[:n])
 		switch sipMethodForTest(request) {
 		case "REGISTER":
-			r.writeResponse(request, remote, 200, "P-Associated-URI: <sip:user@ims.example.com>\r\n")
+			r.writeResponse(request, remote, 200, "P-Associated-URI: <sip:user@ims.example.com>\r\n"+
+				"Contact: "+voiceTestHeader(request, "Contact")+"\r\n")
 		case "INVITE":
 			invite, inviteRemote = request, remote
 			contact := fmt.Sprintf("<sip:callee@127.0.0.1:%d>", r.conn.LocalAddr().(*net.UDPAddr).Port)

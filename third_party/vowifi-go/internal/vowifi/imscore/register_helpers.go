@@ -137,56 +137,6 @@ func parseCSeq(value string) int {
 	return parsed
 }
 
-func parseExpiresHeader(value string, fallback uint32) uint32 {
-	seconds, err := strconv.ParseUint(strings.TrimSpace(value), 10, 32)
-	if err != nil || seconds == 0 {
-		return fallback
-	}
-	return uint32(seconds)
-}
-
-func parseRegisterExpiresFromResponse(response *sipResponse, fallback uint32) uint32 {
-	if response == nil {
-		return fallback
-	}
-	if seconds := parseExpiresHeader(response.Header("Expires"), 0); seconds > 0 {
-		return seconds
-	}
-	for _, header := range response.HeaderValues("Contact") {
-		for _, contact := range splitSIPHeaderValues(header) {
-			if seconds := parseContactExpiresParam(contact); seconds > 0 {
-				return seconds
-			}
-		}
-	}
-	return fallback
-}
-
-func parseContactExpiresParam(contact string) uint32 {
-	lower := strings.ToLower(contact)
-	for offset := 0; offset < len(lower); {
-		index := strings.Index(lower[offset:], "expires=")
-		if index < 0 {
-			return 0
-		}
-		start := offset + index + len("expires=")
-		for start < len(lower) && (lower[start] == ' ' || lower[start] == '\t') {
-			start++
-		}
-		end := start
-		for end < len(lower) && lower[end] >= '0' && lower[end] <= '9' {
-			end++
-		}
-		if end > start {
-			if seconds := parseExpiresHeader(lower[start:end], 0); seconds > 0 {
-				return seconds
-			}
-		}
-		offset = start
-	}
-	return 0
-}
-
 func parseRemoteIPFromPath(path string) string {
 	lower := strings.ToLower(path)
 	index := strings.Index(lower, "sip:")

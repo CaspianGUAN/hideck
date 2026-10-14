@@ -183,7 +183,7 @@ export function useCardPolicyToggles(
     if (mode === 'cellular') {
       next.network_enabled = strategy === 'always' || next.network_enabled
       next.airplane_enabled = false
-    } else if (mode === 'volte') {
+    } else if (mode === 'volte' || mode === 'modem_voice') {
       next.airplane_enabled = false
     } else {
       next.airplane_enabled = true

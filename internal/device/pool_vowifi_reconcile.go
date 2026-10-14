@@ -223,7 +223,7 @@ func (p *Pool) currentCardPolicyAllowsVoWiFi(w *Worker, statusICCID, reason stri
 			"err", err)
 		return false
 	}
-	if IsNativeVoLTEMode(pol.PhoneMode) || IsNativeVoLTEMode(w.Config.PhoneMode) {
+	if UsesModemPhoneControl(pol.PhoneMode) || UsesModemPhoneControl(w.Config.PhoneMode) {
 		p.clearDesiredVoWiFiRecoverState(deviceID)
 		return false
 	}

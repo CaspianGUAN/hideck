@@ -1,0 +1,13 @@
+name: Set up fnpack
+description: Download and verify the pinned official Linux fnpack executable
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+        curl -fL --connect-timeout 10 --max-time 60 \
+          https://static2.fnnas.com/fnpack/fnpack-1.2.3-linux-amd64 -o "$RUNNER_TEMP/fnpack"
+        printf '%s  %s\n' 54b97fa7b70968c4d05c79840f5daeff508957d0bb2062fdb0376d00d9615c93 "$RUNNER_TEMP/fnpack" | sha256sum -c -
+        chmod +x "$RUNNER_TEMP/fnpack"
+        printf 'FNPACK=%s/fnpack\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"

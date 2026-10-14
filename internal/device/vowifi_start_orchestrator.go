@@ -152,6 +152,12 @@ func (p *Pool) prepareVoWiFiStartContext(deviceID, traceID, runtimeEPDGOverride 
 		return startCtx, fmt.Errorf("设备 %s 不存在", deviceID)
 	}
 	startCtx.worker = w
+	if IsModemVoiceMode(w.Config.PhoneMode) {
+		return startCtx, ErrModemVoiceSoftwareIMS
+	}
+	if IsNativeVoLTEMode(w.Config.PhoneMode) {
+		return startCtx, fmt.Errorf("设备 %s 已选择原生 VoLTE，不能启动软件 IMS", deviceID)
+	}
 	w.restoreNetworkAfterVoWiFi = w.Config.NetworkEnabled
 
 	if w.Config.PhoneMode == "cellular" {
@@ -329,7 +335,6 @@ func (p *Pool) prepareVoWiFiStartContext(deviceID, traceID, runtimeEPDGOverride 
 
 	startCtx.NetworkMode = modemIface.GetNetworkMode()
 	startCtx.StartupState = newVoWiFiSIMReadyStartupState(deviceID, swu.DataplaneModeUserspace, startCtx.NetworkMode, time.Now())
-	p.recordVoWiFiStartupState(deviceID, startCtx.StartupState)
 	return startCtx, nil
 }
 
@@ -473,7 +478,6 @@ func (p *Pool) prepareCellularStartContext(
 	}
 	startCtx.NetworkMode = modemIface.GetNetworkMode()
 	startCtx.StartupState = newVoWiFiSIMReadyStartupState(deviceID, swu.DataplaneModeUserspace, startCtx.NetworkMode, time.Now())
-	p.recordVoWiFiStartupState(deviceID, startCtx.StartupState)
 	return startCtx, nil
 }
 
@@ -840,10 +844,17 @@ func formatCountryPoolSkips(skips []countryPoolSkip) []string {
 }
 
 func (p *Pool) beforeVoWiFiStart(deviceID string, modemIface runtimehost.Modem, proxyCfg *runtimehost.ProxyConfig) func(context.Context, runtimehost.SessionConfig) error {
+	epoch := p.voWiFiHost().CurrentEpoch(deviceID)
+	record := func(state runtimehost.State) {
+		p.voWiFiHost().RecordStartupStateForEpoch(deviceID, epoch, state)
+	}
 	return func(startCtx context.Context, cfg runtimehost.SessionConfig) error {
+		if err := startCtx.Err(); err != nil {
+			return err
+		}
 		startupState := newVoWiFiSIMReadyStartupState(deviceID, cfg.DataplaneMode, modemIface.GetNetworkMode(), time.Now())
 		startupState.RegStatus, startupState.RegStatusText = modemIface.GetRegStatus()
-		p.recordVoWiFiStartupState(deviceID, startupState)
+		record(startupState)
 		if proxyCfg != nil && proxyCfg.Enabled && strings.TrimSpace(proxyCfg.Addr) != "" {
 			probeRes, probeErr := upstreamproxy.ProbeSOCKS5(startCtx, upstreamproxy.ProbeConfig{
 				ProxyAddr: proxyCfg.Addr,
@@ -855,7 +866,7 @@ func (p *Pool) beforeVoWiFiStart(deviceID string, modemIface runtimehost.Modem, 
 				if probeRes.UDPAssociationOK() {
 					probeSummary := probeRes.FailureSummary()
 					startupState.LastReason = "公共 DNS UDP 探测失败，继续验证实际 ePDG/IKE 链路: " + probeSummary
-					p.recordVoWiFiStartupState(deviceID, startupState)
+					record(startupState)
 					logger.Warn("前置代理公共 DNS UDP 探测失败，继续验证实际 ePDG/IKE 链路",
 						"device", deviceID,
 						"proxy_addr", proxyCfg.Addr,
@@ -867,7 +878,7 @@ func (p *Pool) beforeVoWiFiStart(deviceID string, modemIface runtimehost.Modem, 
 				startupState.LastErrorClass = "proxy"
 				startupState.LastError = probeErr.Error()
 				startupState.LastReason = probeRes.FailureSummary()
-				p.recordVoWiFiStartupState(deviceID, startupState)
+				record(startupState)
 				return fmt.Errorf("前置代理自检失败: %w", probeErr)
 			}
 		}

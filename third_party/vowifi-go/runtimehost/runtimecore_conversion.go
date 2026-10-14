@@ -30,7 +30,7 @@ func preparedSessionFromInternal(value internalprofile.PreparedSession) identity
 	)
 	return identity.PreparedSession{
 		Profile: identity.Profile{
-			IMSI: value.Profile.IMSI, MCC: value.Profile.MCC, MNC: value.Profile.MNC,
+			ICCID: value.Profile.ICCID, IMSI: value.Profile.IMSI, MCC: value.Profile.MCC, MNC: value.Profile.MNC,
 			IMEI: value.Profile.IMEI, UserAgent: value.Profile.UserAgent,
 			SMSC: value.Profile.SMSC, IMSDomain: value.Profile.IMSDomain,
 		},
@@ -57,7 +57,7 @@ func preparedSessionPtrToInternal(value *identity.PreparedSession) *internalprof
 	carrierConfig := runtimehostcarrier.ToInternal(value.ResolvedCarrierConfig())
 	return &internalprofile.PreparedSession{
 		Profile: internalprofile.Profile{
-			IMSI: value.Profile.IMSI, MCC: value.Profile.MCC, MNC: value.Profile.MNC,
+			ICCID: value.Profile.ICCID, IMSI: value.Profile.IMSI, MCC: value.Profile.MCC, MNC: value.Profile.MNC,
 			IMEI: value.Profile.IMEI, UserAgent: value.Profile.UserAgent,
 			SMSC: value.Profile.SMSC, IMSDomain: value.Profile.IMSDomain,
 		},

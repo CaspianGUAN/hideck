@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import {
   ArrowSync24Regular,
   Router24Regular,
@@ -8,6 +8,7 @@ import {
 } from '@vicons/fluent'
 import type { DeviceConfigDTO, DeviceOverviewItem } from '../types/api'
 import { normalizeManagedDeviceBackend } from '../utils/deviceBackend'
+import MBNPanel from './MBNPanel.vue'
 
 const props = defineProps<{
   editConfig: DeviceConfigDTO | null
@@ -33,6 +34,7 @@ const isManagedBackend = computed(
   () => normalizeManagedDeviceBackend(configuredBackend.value) !== null
 )
 const isPCSCBackend = computed(() => configuredBackend.value === 'pcsc')
+const expandedSettings = ref<string[]>([])
 </script>
 
 <template>
@@ -44,7 +46,7 @@ const isPCSCBackend = computed(() => configuredBackend.value === 'pcsc')
       <div>
         <span>DEVICE CONFIGURATION</span>
         <h2>设备配置</h2>
-        <p>编辑数据库中的设备绑定；自动探测字段保持只读</p>
+        <p>修改设备名称和连接协议，端口由系统自动识别。</p>
       </div>
     </header>
 
@@ -57,7 +59,7 @@ const isPCSCBackend = computed(() => configuredBackend.value === 'pcsc')
             <el-input v-model="editConfig.name" placeholder="显示名称" />
           </div>
           <div class="config-field">
-            <label>ID</label>
+            <label>设备 ID</label>
             <el-input v-model="editConfig.id" disabled />
           </div>
           <div class="config-field">
@@ -81,7 +83,7 @@ const isPCSCBackend = computed(() => configuredBackend.value === 'pcsc')
           <div class="config-protocol-field">
           <div>
               <strong>设备运行模式</strong>
-              <small>协议切换保存后将触发设备重新绑定</small>
+              <small>切换协议后，设备会重新连接。</small>
           </div>
           <el-radio-group
             v-if="isManagedBackend"
@@ -114,9 +116,9 @@ const isPCSCBackend = computed(() => configuredBackend.value === 'pcsc')
         </section>
       </div>
 
-      <p class="config-notice">协议或绑定配置变更可能导致设备短暂离线；保存仍使用现有设备配置接口。</p>
+      <p class="config-notice">更改连接协议后，设备会短暂离线。</p>
       <footer class="config-actions">
-        <el-button type="danger" :loading="deleting" @click="emit('delete')" class="!border-0">
+        <el-button type="danger" plain :loading="deleting" @click="emit('delete')">
           <el-icon><Delete24Regular /></el-icon>
           删除设备
         </el-button>
@@ -132,6 +134,20 @@ const isPCSCBackend = computed(() => configuredBackend.value === 'pcsc')
         </div>
       </footer>
     </div>
+    <el-collapse v-if="editConfig && !isPCSCBackend" v-model="expandedSettings" class="mbn-settings">
+      <el-collapse-item name="mbn">
+        <template #title>
+          <span class="mbn-entry">
+            <span class="mbn-entry-copy">
+              <strong>运营商配置（MBN）</strong>
+              <small>切换模组配置、上传文件或绑定 SIM。</small>
+            </span>
+            <span class="mbn-entry-action">{{ expandedSettings.includes('mbn') ? '收起' : '展开' }}</span>
+          </span>
+        </template>
+        <MBNPanel :device-id="editConfig.id" />
+      </el-collapse-item>
+    </el-collapse>
   </section>
 </template>
 
@@ -154,13 +170,28 @@ const isPCSCBackend = computed(() => configuredBackend.value === 'pcsc')
 .config-protocol-field strong { display: block; color: var(--ui-text); font-size: var(--ui-font-body-sm); }
 .config-protocol-field small { display: block; margin-top: 2px; color: var(--ui-text-muted); font-size: var(--ui-font-caption); }
 .config-notice { margin: 0; padding: 11px 22px; border-top: 1px solid var(--ui-border); border-bottom: 1px solid var(--ui-border); background: color-mix(in srgb, var(--ui-warning) 6%, var(--ui-surface)); color: var(--ui-text-muted); font-size: var(--ui-font-body-sm); }
-.config-actions { min-height: 70px; padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.mbn-settings { margin-top: 18px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-xl); overflow: hidden; background: var(--ui-surface-strong); }
+.mbn-settings :deep(.el-collapse-item__header) { height: auto; min-height: 76px; padding: 18px 22px; line-height: 1.5; border: 0; background: var(--ui-surface-strong); color: var(--ui-text); }
+.mbn-settings :deep(.el-collapse-item__header:hover) { background: var(--ui-surface-muted); }
+.mbn-settings :deep(.el-collapse-item__header:focus-visible) { outline: 2px solid var(--ui-accent); outline-offset: -3px; }
+.mbn-settings :deep(.el-collapse-item__title) { min-width: 0; flex: 1; }
+.mbn-settings :deep(.el-collapse-item__wrap) { border: 0; background: var(--ui-surface-strong); }
+.mbn-settings :deep(.el-collapse-item__content) { padding: 22px; border-top: 1px solid var(--ui-border); }
+.mbn-entry { display: flex; flex: 1; align-items: center; gap: 12px; min-width: 0; text-align: left; }
+.mbn-entry-copy { display: grid; flex: 1; gap: 4px; min-width: 0; }
+.mbn-entry-copy strong { color: var(--ui-text); font-size: var(--ui-font-body); font-weight: 650; }
+.mbn-entry-copy small { color: var(--ui-text-muted); font-size: var(--ui-font-body-sm); font-weight: 400; }
+.mbn-entry-action { margin: 0 12px; color: var(--ui-text-muted); font-size: var(--ui-font-body-sm); font-weight: 400; }
+.config-actions { min-height: 76px; padding: 16px 22px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--ui-border); }
+.config-actions :deep(.el-button) { min-height: 44px; }
+.config-actions :deep(.el-icon) { margin-right: 6px; }
 .config-primary-actions { display: flex; align-items: center; gap: 10px; }
 
 @media (max-width: 760px) {
   .config-columns { grid-template-columns: minmax(0, 1fr); }
   .config-columns > section { padding: 18px 16px; }
   .config-columns > section + section { border-top: 1px solid var(--ui-border); border-left: 0; }
+  .mbn-settings :deep(.el-collapse-item__header), .mbn-settings :deep(.el-collapse-item__content) { padding: 18px 16px; }
 }
 
 @media (max-width: 520px) {
@@ -169,5 +200,6 @@ const isPCSCBackend = computed(() => configuredBackend.value === 'pcsc')
   .config-actions { align-items: stretch; flex-direction: column-reverse; }
   .config-actions :deep(.el-button) { width: 100%; min-height: 44px; margin-left: 0; }
   .config-primary-actions { width: 100%; flex-direction: column-reverse; }
+  .mbn-entry-action { display: none; }
 }
 </style>

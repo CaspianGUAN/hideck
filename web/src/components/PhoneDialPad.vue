@@ -1,5 +1,5 @@
 <script setup lang="ts">
-defineProps<{ disabled?: boolean }>()
+defineProps<{ disabled?: boolean; allowPlus?: boolean; plusDisabled?: boolean }>()
 
 defineEmits<{ digit: [digit: string] }>()
 
@@ -7,31 +7,42 @@ const keys = [
   { digit: '1', letters: '' }, { digit: '2', letters: 'ABC' }, { digit: '3', letters: 'DEF' },
   { digit: '4', letters: 'GHI' }, { digit: '5', letters: 'JKL' }, { digit: '6', letters: 'MNO' },
   { digit: '7', letters: 'PQRS' }, { digit: '8', letters: 'TUV' }, { digit: '9', letters: 'WXYZ' },
-  { digit: '*', letters: '' }, { digit: '0', letters: '+' }, { digit: '#', letters: '' }
+  { digit: '*', letters: '' }, { digit: '0', letters: '' }, { digit: '#', letters: '' }
 ]
 </script>
 
 <template>
-  <div class="dial-pad" aria-label="电话拨号盘">
+  <div class="dial-pad-group">
+    <div class="dial-pad" aria-label="电话拨号盘">
+      <button
+        v-for="key in keys"
+        :key="key.digit"
+        type="button"
+        class="dial-key"
+        :disabled="disabled"
+        :aria-label="`按键 ${key.digit}${key.letters ? `，${key.letters}` : ''}`"
+        @click="$emit('digit', key.digit)"
+      >
+        <span>{{ key.digit }}</span>
+        <small>{{ key.letters || '&nbsp;' }}</small>
+      </button>
+    </div>
     <button
-      v-for="key in keys"
-      :key="key.digit"
+      v-if="allowPlus"
       type="button"
-      class="dial-key"
-      :disabled="disabled"
-      :aria-label="`按键 ${key.digit}${key.letters ? `，${key.letters}` : ''}`"
-      @click="$emit('digit', key.digit)"
+      class="dial-plus"
+      aria-label="输入加号，国际号码"
+      :disabled="disabled || plusDisabled"
+      @click="$emit('digit', '+')"
     >
-      <span>{{ key.digit }}</span>
-      <small>{{ key.letters || '&nbsp;' }}</small>
+      <span aria-hidden="true">+</span> 国际号码
     </button>
   </div>
 </template>
 
 <style scoped>
+.dial-pad-group { width: 276px; max-width: 100%; }
 .dial-pad {
-  width: 276px;
-  max-width: 100%;
   margin: 0 auto;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -61,6 +72,20 @@ const keys = [
 .dial-key:disabled { cursor: not-allowed; opacity: .45; }
 .dial-key span { font-family: "v-mono", monospace; font-size: 22px; line-height: 1; }
 .dial-key small { min-height: 12px; margin-top: 4px; color: var(--ui-text-muted); font-size: 9px; letter-spacing: .12em; }
+.dial-plus {
+  min-height: 44px;
+  width: 100%;
+  margin-top: 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: transparent;
+  color: var(--ui-text-muted);
+  cursor: pointer;
+}
+.dial-plus span { font-size: 20px; vertical-align: -1px; }
+.dial-plus:hover:not(:disabled) { color: var(--ui-primary); border-color: var(--ui-primary); }
+.dial-plus:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: 2px; }
+.dial-plus:disabled { cursor: not-allowed; opacity: .45; }
 
 @media (prefers-reduced-motion: reduce) {
   .dial-key { transition: none; }

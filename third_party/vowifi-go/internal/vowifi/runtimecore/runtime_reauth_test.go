@@ -57,8 +57,8 @@ func TestOverlappingReauthKeepsOldSessionUntilSuccessorIsUp(t *testing.T) {
 		if !config.OmitInitialContact {
 			t.Error("successor IKE_AUTH still advertised INITIAL_CONTACT")
 		}
-		if config.FastReauthID != "reauth@example" {
-			t.Errorf("successor FastReauthID = %q", config.FastReauthID)
+		if config.FastReauthID != "" {
+			t.Errorf("successor replayed fast reauth identity %q", config.FastReauthID)
 		}
 		if config.TUNName != "tun-ims-reauth" {
 			t.Errorf("successor TUNName = %q", config.TUNName)
@@ -112,7 +112,7 @@ func TestOverlappingReauthKeepsOldSessionUntilSuccessorIsUp(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("runtime did not return after cancel")
 	}
-	if successor.FastReauthID != "reauth@example" || !successor.OmitInitialContact {
+	if successor.FastReauthID != "" || !successor.OmitInitialContact {
 		t.Fatalf("successor config = %+v", successor)
 	}
 }
@@ -190,7 +190,7 @@ func TestOverlappingReauthKeepsOldSessionWhenSuccessorFails(t *testing.T) {
 	}
 }
 
-func TestStartOverlappingReauthOmitsInitialContactAndAppliesFastReauth(t *testing.T) {
+func TestStartOverlappingReauthOmitsInitialContactAndUsesFullAuth(t *testing.T) {
 	req := baseRuntimeRequest(&eventRecorder{})
 	req.fastReauth.Capture()("reauth@example", []byte{1}, []byte{2}, []byte{3})
 	var got SessionConfig
@@ -211,8 +211,8 @@ func TestStartOverlappingReauthOmitsInitialContactAndAppliesFastReauth(t *testin
 	if !got.OmitInitialContact {
 		t.Fatal("overlapping reauth sent INITIAL_CONTACT")
 	}
-	if got.FastReauthID != "reauth@example" {
-		t.Fatalf("FastReauthID = %q", got.FastReauthID)
+	if got.FastReauthID != "" {
+		t.Fatalf("overlapping reauth replayed fast reauth identity %q", got.FastReauthID)
 	}
 	if req.omitInitialContact {
 		t.Fatal("request OmitInitialContact leaked onto the original runtime")

@@ -18,6 +18,9 @@ type fakeVoiceGateway struct {
 	unsubscribed    int
 	beginSnapshot   voicehost.CallSnapshot
 	beginEvents     []voicehost.CallEvent
+	beginStarted    chan struct{}
+	beginRelease    chan struct{}
+	answerSDP       string
 	rejectEmits     bool
 	hangupCalls     chan string
 	dtmfCalls       chan string
@@ -54,10 +57,24 @@ func (g *fakeVoiceGateway) SubscribeCallEvents(handler func(voicehost.CallEvent)
 	return g.unsubscribe
 }
 
-func (g *fakeVoiceGateway) BeginCall(_ context.Context, request voicehost.BeginCallRequest) (voicehost.CallSnapshot, error) {
+func (g *fakeVoiceGateway) BeginCall(ctx context.Context, request voicehost.BeginCallRequest) (voicehost.CallSnapshot, error) {
 	g.mu.Lock()
 	handler, pending, snapshot := g.events, append([]voicehost.CallEvent(nil), g.beginEvents...), g.beginSnapshot
+	started, release := g.beginStarted, g.beginRelease
 	g.mu.Unlock()
+	if started != nil {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+	}
+	if release != nil {
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return voicehost.CallSnapshot{}, ctx.Err()
+		}
+	}
 	for _, event := range pending {
 		handler(event)
 	}
@@ -76,7 +93,7 @@ func (g *fakeVoiceGateway) ActiveCall(deviceID string) *voicehost.CallSnapshot {
 }
 
 func (g *fakeVoiceGateway) AnswerIncomingCall(_ context.Context, request voicehost.AnswerRequest) (voicehost.AnswerResult, error) {
-	return voicehost.AnswerResult{CallID: request.CallID, State: "Connected"}, nil
+	return voicehost.AnswerResult{CallID: request.CallID, State: "Connected", OfferSDP: g.answerSDP}, nil
 }
 
 func (g *fakeVoiceGateway) RejectIncomingCall(request voicehost.RejectRequest) error {

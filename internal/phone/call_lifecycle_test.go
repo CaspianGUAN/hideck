@@ -146,7 +146,6 @@ func waitForResultNotification(t *testing.T, notifications <-chan capturedNotifi
 			t.Fatal("terminal notification was not delivered")
 		}
 	}
-	return capturedNotification{}
 }
 
 func TestBusyIncomingCallIsRecordedOnce(t *testing.T) {

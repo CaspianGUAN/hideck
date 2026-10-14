@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yibaiba/hideck/internal/mbn"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
@@ -150,8 +152,10 @@ func Init(dbPath string) error {
 
 	// 自动迁移
 	if err := DB.AutoMigrate(
+		&mbn.Asset{}, &mbn.Policy{}, &mbn.Operation{},
 		&Device{},
 		&CardPolicy{},
+		&OutboundUsage{},
 		&SIMCard{},
 		&SIMSubscription{},
 		&PendingPhoneNumber{},
@@ -190,13 +194,21 @@ func Init(dbPath string) error {
 	if err := ensureSMSDeliveryPartUniqueIndex(DB); err != nil {
 		return err
 	}
-	if err := ensureSMSFragmentSessionUniqueIndex(DB); err != nil {
-		return err
-	}
 	if err := RunICCIDReKeyMigration(DB); err != nil {
 		return err
 	}
 	if err := MigrateSMSCanonicalICCID(DB); err != nil {
+		return err
+	}
+	if err := MigrateSIMICCIDIdentities(DB); err != nil {
+		return err
+	}
+	if err := MigrateSMSInboundFragmentIdentity(DB); err != nil {
+		return err
+	}
+	// The fragment key now includes ICCID. Build its index only after every
+	// historical SMS row has had its canonical ICCID repaired.
+	if err := ensureSMSFragmentSessionUniqueIndex(DB); err != nil {
 		return err
 	}
 	if err := MigrateCardPolicyCanonicalICCID(DB); err != nil {
@@ -267,9 +279,10 @@ func UpsertSIMCardIdentity(iccid, imsi, operator string, currentIMEI *string) er
 	if DB == nil {
 		return nil
 	}
-	iccid = strings.TrimSpace(iccid)
+	iccid = CanonicalICCID(iccid)
 	imsi = strings.TrimSpace(imsi)
 	operator = strings.TrimSpace(operator)
+	currentIMEI = normalizedIMEIPointer(currentIMEI)
 	if iccid == "" {
 		return nil
 	}
@@ -297,13 +310,15 @@ func UpsertSIMCardIdentity(iccid, imsi, operator string, currentIMEI *string) er
 		}).Create(&sim).Error; err != nil {
 			return err
 		}
-		if currentIMEI == nil {
-			if err := tx.Model(&Device{}).Where("iccid = ?", iccid).Updates(map[string]any{
-				"iccid":      nil,
-				"updated_at": now,
-			}).Error; err != nil {
-				return err
-			}
+		if err := reconcileLiveICCIDTx(tx, SMSIdentity{ICCID: iccid, IMSI: imsi}); err != nil {
+			return err
+		}
+		binding := simDeviceBinding{ICCID: iccid, Now: now}
+		if currentIMEI != nil {
+			binding.IMEI = *currentIMEI
+		}
+		if err := reconcileSIMDeviceBindingTx(tx, binding); err != nil {
+			return err
 		}
 		if imsi == "" {
 			return nil
@@ -412,7 +427,7 @@ func updateSIMCardPhoneNumberByIMSI(imsi, phone, source string) error {
 // updatePendingPhoneByICCID 与 updateSIMCardPhoneNumberByIMSI 同构，但按 ICCID 暂存。
 // 优先级同样 vowifi > modem。
 func updatePendingPhoneByICCID(iccid, phone, source string) error {
-	iccid = strings.TrimSpace(iccid)
+	iccid = CanonicalICCID(iccid)
 	if iccid == "" || DB == nil {
 		return nil
 	}
@@ -474,7 +489,7 @@ func RecordVoWiFiPhoneNumber(imsi, iccid, phone string) error {
 // 复用 updateSIMCardPhoneNumberByIMSI（自带 IMSI 等值守卫），随后删除 staging 行。
 func migratePendingPhoneToSubscription(imsi, iccid string) error {
 	imsi = strings.TrimSpace(imsi)
-	iccid = strings.TrimSpace(iccid)
+	iccid = CanonicalICCID(iccid)
 	if imsi == "" || iccid == "" || DB == nil {
 		return nil
 	}
@@ -534,10 +549,16 @@ func allSameRune(s string, r rune) bool {
 
 // UpdateDeviceCurrentSIM 更新设备当前插入的 SIM 卡
 func UpdateDeviceCurrentSIM(imei string, iccid *string) error {
-	return DB.Model(&Device{}).Where("imei = ?", imei).Updates(map[string]interface{}{
-		"iccid":     iccid,
-		"last_seen": time.Now(),
-	}).Error
+	if DB == nil {
+		return nil
+	}
+	binding := simDeviceBinding{IMEI: strings.TrimSpace(imei), Now: time.Now()}
+	if iccid != nil {
+		binding.ICCID = CanonicalICCID(*iccid)
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		return reconcileSIMDeviceBindingTx(tx, binding)
+	})
 }
 
 // UpdateDeviceSignal 更新设备信号强度
@@ -553,36 +574,6 @@ func UpdateDeviceSignal(imei string, signalDBM int) error {
 // 的消息在同一秒内能通过 id 正确排序
 func SaveSMS(imsi, sender, recipient, content string, smsType, status int, timestamp time.Time) error {
 	return SaveSMSWithLocalPhone(imsi, "", sender, recipient, content, smsType, status, timestamp)
-}
-
-// HasDuplicateReceivedSMS 检查在指定时间窗口内是否已存在内容相同的下行接收短信。
-func HasDuplicateReceivedSMS(imsi, localPhone, sender, recipient, content string, timestamp time.Time, window time.Duration) (bool, error) {
-	if DB == nil {
-		return false, nil
-	}
-	imsi = strings.TrimSpace(imsi)
-	sender = strings.TrimSpace(sender)
-	recipient = strings.TrimSpace(recipient)
-	content = strings.TrimSpace(content)
-	if imsi == "" || sender == "" || content == "" {
-		return false, nil
-	}
-	if window <= 0 {
-		window = 5 * time.Minute
-	}
-	ts := timestamp.Truncate(time.Second)
-	start := ts.Add(-window)
-	end := ts.Add(window)
-
-	var count int64
-	err := DB.Model(&SMS{}).
-		Where("imsi = ? AND type = ? AND sender = ? AND recipient = ? AND content = ? AND timestamp BETWEEN ? AND ?",
-			imsi, 1, sender, strings.TrimSpace(recipient), content, start, end).
-		Count(&count).Error
-	if err != nil {
-		return false, err
-	}
-	return count > 0, nil
 }
 
 // SaveSMSWithLocalPhone 保存短信记录并显式写入本机号码。
@@ -606,24 +597,39 @@ func normalizeSMSPeer(smsType int, sender, recipient string) string {
 }
 
 func normalizeSMSLocalPhone(imsi string, smsType int, localPhone, sender, recipient string) string {
-	trimPhone := canonicalLocalPhone(localPhone)
+	return normalizeSMSLocalPhoneForIdentity(smsLocalPhoneInput{
+		Identity: SMSIdentity{IMSI: strings.TrimSpace(imsi)}, Type: smsType,
+		LocalPhone: localPhone, Sender: sender, Recipient: recipient,
+	})
+}
+
+type smsLocalPhoneInput struct {
+	Identity   SMSIdentity
+	Type       int
+	LocalPhone string
+	Sender     string
+	Recipient  string
+}
+
+func normalizeSMSLocalPhoneForIdentity(input smsLocalPhoneInput) string {
+	trimPhone := canonicalLocalPhone(input.LocalPhone)
 	if looksLikePhoneNumber(trimPhone) {
 		return trimPhone
 	}
 
 	var candidate string
-	switch smsType {
+	switch input.Type {
 	case 1:
-		candidate = canonicalLocalPhone(recipient)
+		candidate = canonicalLocalPhone(input.Recipient)
 	case 2:
-		candidate = canonicalLocalPhone(sender)
+		candidate = canonicalLocalPhone(input.Sender)
 	}
 	if looksLikePhoneNumber(candidate) {
 		return candidate
 	}
 
-	if imsi != "" {
-		if learned, err := GetSIMCardPhoneNumberByIMSI(imsi); err == nil {
+	if strings.TrimSpace(input.Identity.IMSI) != "" {
+		if learned, err := GetPhoneNumberForSMSIdentity(input.Identity); err == nil {
 			learned = canonicalLocalPhone(learned)
 			if looksLikePhoneNumber(learned) {
 				return learned
@@ -823,6 +829,7 @@ func GetSMSByIMSI(imsi string, limit int) ([]SMS, error) {
 
 // GetSMSByICCID 获取指定 ICCID 的短信列表（P4 ICCID 维度读取）。
 func GetSMSByICCID(iccid string, limit int) ([]SMS, error) {
+	iccid = CanonicalICCID(iccid)
 	var smsList []SMS
 	err := DB.Where("iccid = ?", iccid).Order("timestamp desc").Limit(limit).Find(&smsList).Error
 	return smsList, err
@@ -831,7 +838,7 @@ func GetSMSByICCID(iccid string, limit int) ([]SMS, error) {
 // ListIMSIsForICCID 返回这张卡见过的 IMSI：sim_subscriptions 按 current_iccid，
 // 以及 sim_cards 当前行。sim_cards.imsi 会被 upsert 盖掉，历史只靠订阅行。
 func ListIMSIsForICCID(iccid string) ([]string, error) {
-	iccid = strings.TrimSpace(iccid)
+	iccid = CanonicalICCID(iccid)
 	if DB == nil || iccid == "" {
 		return nil, nil
 	}
@@ -902,7 +909,7 @@ func GetICCIDForIMSI(imsi string) string {
 	if err != nil || strings.TrimSpace(r.ICCID) == "" || strings.HasPrefix(r.ICCID, "reader-imsi-") {
 		return "imsi:" + imsi
 	}
-	return strings.TrimSpace(r.ICCID)
+	return CanonicalICCID(r.ICCID)
 }
 
 // GetRecentSMS 获取所有 SIM 卡的最近短信列表
@@ -1198,7 +1205,7 @@ func DeleteSMSByICCIDAndPeer(iccid, peer string) (int64, error) {
 	if DB == nil {
 		return 0, ErrSMSNotFound
 	}
-	iccid = strings.TrimSpace(iccid)
+	iccid = CanonicalICCID(iccid)
 	peer = strings.TrimSpace(peer)
 	if iccid == "" || peer == "" {
 		return 0, ErrSMSNotFound

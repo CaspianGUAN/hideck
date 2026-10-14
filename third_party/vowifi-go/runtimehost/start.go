@@ -337,7 +337,7 @@ func preparedForRuntimeCore(prepared *identity.PreparedSession) *runtimecore.Pre
 	authPlan := runtimeAuthPlan(prepared)
 	return &runtimecore.PreparedSessionStart{
 		Profile: profile.Profile{
-			IMSI: prepared.Profile.IMSI, MCC: prepared.Profile.MCC, MNC: prepared.Profile.MNC,
+			ICCID: prepared.Profile.ICCID, IMSI: prepared.Profile.IMSI, MCC: prepared.Profile.MCC, MNC: prepared.Profile.MNC,
 			IMEI: prepared.Profile.IMEI, UserAgent: prepared.Profile.UserAgent,
 			SMSC: prepared.Profile.SMSC, IMSDomain: prepared.Profile.IMSDomain,
 		},
@@ -455,6 +455,7 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 	}
 	cfg := &imscore.IMSConfig{
 		DeviceID: req.DeviceID,
+		ICCID:    strings.TrimSpace(req.Prepared.Profile.ICCID),
 		IMEI: firstNonEmptyString(
 			req.Prepared.Profile.IMEI,
 			imscore.GenerateRandomIMEIForModel(defaultIMSDeviceModel),

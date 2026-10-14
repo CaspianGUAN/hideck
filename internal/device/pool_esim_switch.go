@@ -10,6 +10,7 @@ import (
 	"github.com/yibaiba/hideck/internal/backend"
 	"github.com/yibaiba/hideck/internal/esim"
 	"github.com/yibaiba/hideck/pkg/logger"
+	"github.com/yibaiba/hideck/pkg/simidentity"
 )
 
 var postSwitchSIMAuthRecoveryDelays = []time.Duration{
@@ -116,6 +117,10 @@ func (p *Pool) captureESIMSwitchContext(deviceID string, targetICCID string) esi
 }
 
 func (p *Pool) beginESIMSwitch(deviceID string, targetICCID string) esimSwitchContext {
+	transition := p.policyTransitionFor(deviceID)
+	transition.Lock()
+	defer transition.Unlock()
+	transition.switchEpoch++
 	snapshot := p.captureESIMSwitchContext(deviceID, targetICCID)
 	p.switchMu.Lock()
 	if p.switchingDevices == nil {
@@ -633,9 +638,7 @@ func normalizeSIMIdentity(v string) string {
 }
 
 func normalizeSIMIdentityForCompare(v string) string {
-	v = strings.ToUpper(strings.TrimSpace(v))
-	v = strings.ReplaceAll(v, " ", "")
-	return strings.TrimRight(v, "F")
+	return simidentity.CanonicalICCID(v)
 }
 
 func (p *Pool) resolvePostSwitchSnapshot(deviceID string) esimSwitchContext {

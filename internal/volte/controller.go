@@ -28,6 +28,7 @@ type Controller struct {
 }
 
 type session struct {
+	events          sync.Mutex
 	gen             uint64
 	imsHooked       bool
 	status          Status
@@ -88,6 +89,18 @@ func (c *Controller) SetAudioRuntime(audio *AudioRuntime) {
 }
 
 func (c *Controller) Enable(ctx context.Context, deviceID string) error {
+	return c.EnableChecked(ctx, EnableRequest{DeviceID: deviceID})
+}
+
+// EnableRequest validates external ownership while holding the same device
+// lock as Disable/DisableForHandoff, before installing a session or doing I/O.
+type EnableRequest struct {
+	DeviceID string
+	Validate func() error
+}
+
+func (c *Controller) EnableChecked(ctx context.Context, request EnableRequest) error {
+	deviceID := request.DeviceID
 	deviceID = strings.TrimSpace(deviceID)
 	if c == nil || c.host == nil || deviceID == "" {
 		return errors.New("volte: controller is not configured")
@@ -96,6 +109,14 @@ func (c *Controller) Enable(ctx context.Context, deviceID string) error {
 		ctx = context.Background()
 	}
 	return c.withDevice(deviceID, func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if request.Validate != nil {
+			if err := request.Validate(); err != nil {
+				return err
+			}
+		}
 		c.mu.Lock()
 		s := c.sess[deviceID]
 		if s == nil {
@@ -367,13 +388,17 @@ func (c *Controller) attachIMS(deviceID string, gen uint64) {
 	s.imsHooked = true
 	c.mu.Unlock()
 	_ = c.host.OnIMSRegistration(deviceID, func(info *qmi.IMSARegistrationStatus) {
-		if !c.generationLive(deviceID, gen) {
+		s.events.Lock()
+		defer s.events.Unlock()
+		if !c.sessionGenerationLive(deviceID, s, gen) {
 			return
 		}
 		c.patch(deviceID, func(st *Status) { applyIMSARegistration(st, info) })
 	})
 	_ = c.host.OnIMSServices(deviceID, func(info *qmi.IMSAServicesStatus) {
-		if !c.generationLive(deviceID, gen) {
+		s.events.Lock()
+		defer s.events.Unlock()
+		if !c.sessionGenerationLive(deviceID, s, gen) {
 			return
 		}
 		c.patch(deviceID, func(st *Status) {
@@ -384,11 +409,11 @@ func (c *Controller) attachIMS(deviceID string, gen uint64) {
 	})
 }
 
-func (c *Controller) generationLive(deviceID string, gen uint64) bool {
+func (c *Controller) sessionGenerationLive(deviceID string, owner *session, gen uint64) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	s := c.sess[deviceID]
-	return s != nil && s.gen == gen
+	return s != nil && s == owner && s.gen == gen
 }
 
 func (c *Controller) withDevice(deviceID string, fn func() error) error {

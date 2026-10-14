@@ -8,10 +8,14 @@ import (
 	"gorm.io/gorm"
 )
 
-const smsFragmentSessionUniqueIndexSQL = "CREATE UNIQUE INDEX IF NOT EXISTS uidx_sms_fragment_session " +
-	"ON sms(imsi, fragment_session_key) WHERE fragment_session_key <> ''"
+const (
+	smsFragmentSessionIndexName      = "uidx_sms_fragment_session"
+	smsFragmentSessionUniqueIndexSQL = "CREATE UNIQUE INDEX " + smsFragmentSessionIndexName +
+		" ON sms(iccid, fragment_session_key) WHERE fragment_session_key <> ''"
+)
 
 type ReceivedMultipartSMS struct {
+	ICCID              string
 	IMSI               string
 	LocalPhone         string
 	Sender             string
@@ -20,7 +24,6 @@ type ReceivedMultipartSMS struct {
 	FragmentSessionKey string
 	Timestamp          time.Time
 	Incomplete         bool
-	iccid              string
 }
 
 type ReceivedMultipartSMSResult struct {
@@ -34,7 +37,27 @@ func ensureSMSFragmentSessionUniqueIndex(database *gorm.DB) error {
 	if database == nil {
 		return errors.New("database not initialized")
 	}
-	return database.Exec(smsFragmentSessionUniqueIndexSQL).Error
+	var existing string
+	err := database.Raw(
+		"SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", smsFragmentSessionIndexName,
+	).Scan(&existing).Error
+	if err != nil {
+		return err
+	}
+	compact := compactSQLiteDefinition(existing)
+	if compact == compactSQLiteDefinition(smsFragmentSessionUniqueIndexSQL) {
+		return nil
+	}
+	return database.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("DROP INDEX IF EXISTS " + smsFragmentSessionIndexName).Error; err != nil {
+			return err
+		}
+		return tx.Exec(smsFragmentSessionUniqueIndexSQL).Error
+	})
+}
+
+func compactSQLiteDefinition(definition string) string {
+	return strings.ToLower(strings.Join(strings.Fields(definition), ""))
 }
 
 func SaveReceivedMultipartSMS(input ReceivedMultipartSMS) (ReceivedMultipartSMSResult, error) {
@@ -46,11 +69,13 @@ func SaveReceivedMultipartSMS(input ReceivedMultipartSMS) (ReceivedMultipartSMSR
 		return ReceivedMultipartSMSResult{}, err
 	}
 	var result ReceivedMultipartSMSResult
+	smsPublicationMu.Lock()
+	defer smsPublicationMu.Unlock()
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		var existing SMS
 		findErr := tx.Where(
-			"imsi = ? AND fragment_session_key = ?",
-			normalized.IMSI, normalized.FragmentSessionKey,
+			"iccid = ? AND fragment_session_key = ?",
+			normalized.ICCID, normalized.FragmentSessionKey,
 		).First(&existing).Error
 		if errors.Is(findErr, gorm.ErrRecordNotFound) {
 			created, createErr := createReceivedMultipartSMS(tx, normalized)
@@ -64,11 +89,15 @@ func SaveReceivedMultipartSMS(input ReceivedMultipartSMS) (ReceivedMultipartSMSR
 		result = reconciled
 		return reconcileErr
 	})
+	if err == nil && (result.Created || result.Reconciled) {
+		publishIncomingSMSByID(result.SMSID)
+	}
 	return result, err
 }
 
 func normalizeReceivedMultipartSMS(input ReceivedMultipartSMS) (ReceivedMultipartSMS, error) {
 	result := input
+	result.ICCID = CanonicalICCID(input.ICCID)
 	result.IMSI = strings.TrimSpace(input.IMSI)
 	result.LocalPhone = strings.TrimSpace(input.LocalPhone)
 	result.Sender = strings.TrimSpace(input.Sender)
@@ -81,10 +110,13 @@ func normalizeReceivedMultipartSMS(input ReceivedMultipartSMS) (ReceivedMultipar
 	if result.Timestamp.IsZero() {
 		return ReceivedMultipartSMS{}, errors.New("missing received multipart SMS timestamp")
 	}
-	result.LocalPhone = normalizeSMSLocalPhone(
-		result.IMSI, 1, result.LocalPhone, result.Sender, result.Recipient,
-	)
-	result.iccid = GetICCIDForIMSI(result.IMSI)
+	if result.ICCID == "" {
+		result.ICCID = GetICCIDForIMSI(result.IMSI)
+	}
+	result.LocalPhone = normalizeSMSLocalPhoneForIdentity(smsLocalPhoneInput{
+		Identity: SMSIdentity{ICCID: result.ICCID, IMSI: result.IMSI}, Type: 1,
+		LocalPhone: result.LocalPhone, Sender: result.Sender, Recipient: result.Recipient,
+	})
 	return result, nil
 }
 
@@ -93,7 +125,7 @@ func createReceivedMultipartSMS(
 	input ReceivedMultipartSMS,
 ) (ReceivedMultipartSMSResult, error) {
 	sms := SMS{
-		IMSI: input.IMSI, ICCID: input.iccid,
+		IMSI: input.IMSI, ICCID: input.ICCID,
 		Peer:       normalizeSMSPeer(1, input.Sender, input.Recipient),
 		LocalPhone: input.LocalPhone,
 		Sender:     input.Sender, Recipient: input.Recipient, Content: input.Content,

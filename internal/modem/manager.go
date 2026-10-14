@@ -16,11 +16,11 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/warthog618/sms/encoding/gsm7"
 	"github.com/yibaiba/hideck/internal/apduarbiter"
 	"github.com/yibaiba/hideck/internal/config"
 	"github.com/yibaiba/hideck/pkg/logger"
 	"github.com/yibaiba/hideck/pkg/smscodec"
-	"github.com/warthog618/sms/encoding/gsm7"
 
 	"go.bug.st/serial"
 )
@@ -39,6 +39,9 @@ type rxMsg struct {
 
 // commandRequest AT 命令请求结构
 type commandRequest struct {
+	upload       []byte          // Exclusive QFUPL transaction, never interleaved with text AT.
+	barrier      bool            // Queue fence: completes without writing to the modem.
+	ctx          context.Context // Optional cancellation before the serial write; sent commands are drained.
 	cmd          string
 	respChan     chan string
 	errChan      chan error
@@ -63,6 +66,8 @@ type Manager struct {
 	// 通道驱动的异步架构
 	stop        chan struct{}
 	stopOnce    sync.Once
+	startStopMu sync.Mutex // Serializes startup with stop and the final loop join.
+	stopped     chan struct{}
 	loopWG      sync.WaitGroup
 	cmdChan     chan commandRequest // 普通优先级
 	cmdChanHigh chan commandRequest // 高优先级 (短信, IP 切换)
@@ -77,11 +82,12 @@ type Manager struct {
 	reqPool sync.Pool
 
 	// 状态
-	running  bool
-	busy     bool
-	busyMu   sync.Mutex
-	healthy  bool
-	eofCount int // readLoop 中连续 EOF 计数，用于检测设备断开
+	lifecycleStateMu sync.RWMutex // Protects running and healthy after construction.
+	running          bool
+	busy             bool
+	busyMu           sync.Mutex
+	healthy          bool
+	eofCount         int // readLoop 中连续 EOF 计数，用于检测设备断开
 
 	atTimeoutMu     sync.Mutex
 	atTimeoutStreak int
@@ -136,8 +142,10 @@ type Manager struct {
 	ussdChan chan USSDResult
 
 	// RDY 事件订阅（模组重启后广播）
-	rdyMu   sync.Mutex
-	rdySubs []chan struct{}
+	rdyMu        sync.Mutex
+	rdySubs      []chan struct{}
+	voiceURCMu   sync.Mutex
+	voiceURCSubs map[chan struct{}]struct{}
 
 	// APDU 仲裁（设备级全局）
 	apduArbiter  *apduarbiter.Arbiter
@@ -184,6 +192,7 @@ func newManager(cfg config.DeviceConfig, role runtimeRole) (*Manager, error) {
 		atPort:       cfg.ATPort,
 		role:         role,
 		stop:         make(chan struct{}),
+		stopped:      make(chan struct{}),
 		cmdChan:      make(chan commandRequest, 10),
 		cmdChanHigh:  make(chan commandRequest, 5),
 		rxChan:       make(chan rxMsg, 100),
@@ -487,24 +496,31 @@ func (m *Manager) recordATTimeout(req commandRequest) (int, bool) {
 }
 
 func (m *Manager) tripATTimeoutWatchdog(cmd string, failures int) {
-	if !m.running {
+	if !m.isRunning() {
 		return
 	}
 	logger.Warn(fmt.Sprintf("[%s] AT 连续超时达到阈值，触发控制面恢复", m.cfg.ID),
-		"cmd", cmd,
+		"cmd", logATCommand(cmd),
 		"port", m.atPort,
 		"failures", failures,
 		"threshold", atTimeoutWatchdogThreshold)
-	m.healthy = false
+	m.markUnhealthy()
 	m.Stop()
 	m.notifyDisconnect("at_timeout_threshold")
 }
 
 // Start 启动 AT 管理器的后台协程
 func (m *Manager) Start() error {
+	m.startStopMu.Lock()
+	defer m.startStopMu.Unlock()
+	select {
+	case <-m.stop:
+		return errors.New("AT 管理器已停止，不能重新启动旧实例")
+	default:
+	}
 	if !m.runsATRuntime() {
 		logger.Info(fmt.Sprintf("[%s] 纯 QMI 模式，跳过 AT 管理器启动", m.cfg.ID), "at_port", m.atPort)
-		m.running = false
+		m.setRunning(false)
 		m.markReady()
 		return nil
 	}
@@ -531,7 +547,7 @@ func (m *Manager) Start() error {
 	}
 
 	m.port.SetReadTimeout(100 * time.Millisecond)
-	m.running = true
+	m.setRunning(true)
 
 	// 启动读取协程
 	m.loopWG.Add(1)
@@ -591,37 +607,39 @@ func (m *Manager) handleFatalSerialRuntimeErr(err error, phase string, cmd strin
 	if !isFatalSerialRuntimeErr(err) {
 		return
 	}
-	if !m.running {
+	if !m.isRunning() {
 		return
 	}
 	logger.Warn(fmt.Sprintf("[%s] AT 串口运行期失效，触发恢复", m.cfg.ID),
-		"phase", phase, "cmd", cmd, "port", m.atPort, "err", err)
-	m.healthy = false
+		"phase", phase, "cmd", logATCommand(cmd), "port", m.atPort, "err", logATResponse(cmd, err.Error()))
+	m.markUnhealthy()
 	m.Stop()
 	m.notifyDisconnect("serial_runtime_error")
 }
 
 // Stop 停止管理器
 func (m *Manager) Stop() {
+	m.startStopMu.Lock()
+	defer m.startStopMu.Unlock()
 	m.stopOnce.Do(func() {
 		m.releaseAllAPDULeases("stop")
 		close(m.stop)
+		m.closeVoiceChanges()
 		if m.port != nil {
 			m.port.Close()
 		}
-		m.running = false
+		m.setRunning(false)
+		go func() {
+			m.loopWG.Wait()
+			close(m.stopped)
+		}()
 	})
 }
 
 func (m *Manager) StopAndWait(timeout time.Duration) bool {
 	m.Stop()
-	done := make(chan struct{})
-	go func() {
-		m.loopWG.Wait()
-		close(done)
-	}()
 	select {
-	case <-done:
+	case <-m.stopped:
 		return true
 	case <-time.After(timeout):
 		return false
@@ -678,6 +696,18 @@ func (m *Manager) runLoop() {
 
 // handleCommand 处理单个 AT 命令
 func (m *Manager) handleCommand(req commandRequest) {
+	if req.ctx != nil && req.ctx.Err() != nil {
+		req.errChan <- req.ctx.Err()
+		return
+	}
+	if req.barrier {
+		req.respChan <- ""
+		return
+	}
+	if req.upload != nil {
+		m.handleFileUpload(req)
+		return
+	}
 	startTime := time.Now()
 
 	// 发送命令
@@ -698,7 +728,7 @@ RespLoop:
 		case <-timeoutTimer.C:
 			// 超时时尝试发送 ESC (0x1B) 以取消可能的挂起操作（如短信输入）
 			m.port.Write([]byte{0x1B})
-			logger.Warn(fmt.Sprintf("[%s] 命令执行超时，已发送 ESC 尝试恢复", m.cfg.ID), "port", m.atPort, "cmd", req.cmd, "cost", time.Since(startTime).String())
+			logger.Warn(fmt.Sprintf("[%s] 命令执行超时，已发送 ESC 尝试恢复", m.cfg.ID), "port", m.atPort, "cmd", logATCommand(req.cmd), "cost", time.Since(startTime).String())
 			req.errChan <- errors.New("命令执行超时")
 			if failures, tripped := m.recordATTimeout(req); tripped {
 				m.tripATTimeoutWatchdog(req.cmd, failures)
@@ -713,13 +743,19 @@ RespLoop:
 			}
 
 			line := msg.Data
+			if isVoiceCommandFailure(req.cmd, line) {
+				m.resetATTimeoutWatchdog()
+				m.handleURC(line)
+				req.errChan <- fmt.Errorf("voice command rejected: %s", line)
+				return
+			}
 
 			if line == "OK" {
 				m.resetATTimeoutWatchdog()
 				if !req.silent {
 					logger.Debug(fmt.Sprintf("[%s] AT 执行成功", m.cfg.ID),
-						"cmd", req.cmd,
-						"resp", strings.Join(fullResponse, " | "),
+						"cmd", logATCommand(req.cmd),
+						"resp", logATResponse(req.cmd, strings.Join(fullResponse, " | ")),
 						"cost", time.Since(startTime).Truncate(time.Millisecond).String())
 				}
 				req.respChan <- strings.Join(fullResponse, "\n")
@@ -729,18 +765,18 @@ RespLoop:
 				fullResponse = append(fullResponse, line)
 				if !req.silent {
 					logger.Warn(fmt.Sprintf("[%s] AT 执行失败", m.cfg.ID),
-						"cmd", req.cmd,
-						"resp", strings.Join(fullResponse, " | "),
+						"cmd", logATCommand(req.cmd),
+						"resp", logATResponse(req.cmd, strings.Join(fullResponse, " | ")),
 						"cost", time.Since(startTime).Truncate(time.Millisecond).String())
 				}
-				req.errChan <- fmt.Errorf("设备返回错误: %s", strings.Join(fullResponse, "\n"))
+				req.errChan <- fmt.Errorf("设备返回错误: %s", logATResponse(req.cmd, strings.Join(fullResponse, "\n")))
 				break RespLoop
 			} else if strings.Contains(line, ">") {
 				m.resetATTimeoutWatchdog()
 				fullResponse = append(fullResponse, line)
 				if !req.silent {
 					logger.Debug(fmt.Sprintf("[%s] AT 收到提示", m.cfg.ID),
-						"cmd", req.cmd,
+						"cmd", logATCommand(req.cmd),
 						"resp", ">",
 						"cost", time.Since(startTime).Truncate(time.Millisecond).String())
 				}
@@ -1357,6 +1393,7 @@ func (m *Manager) handleURC(line string) {
 	if s == "" {
 		return
 	}
+	m.notifyVoiceURC(s)
 
 	fr := m.formatURC(s)
 	msg := fmt.Sprintf("[%s] %s", m.cfg.ID, fr.Msg)
@@ -1792,7 +1829,7 @@ func (m *Manager) executeAT(cmd string, timeout time.Duration, silent, highPrior
 	if !m.CanExecuteAT() {
 		return "", errors.New("AT 管理器未启动或不可用")
 	}
-	if !m.healthy {
+	if !m.IsHealthy() {
 		return "", errors.New("设备异常")
 	}
 
@@ -1867,6 +1904,8 @@ func (m *Manager) IsBusy() bool {
 
 // IsHealthy 返回健康状态
 func (m *Manager) IsHealthy() bool {
+	m.lifecycleStateMu.RLock()
+	defer m.lifecycleStateMu.RUnlock()
 	return m.healthy && m.running
 }
 
@@ -1882,7 +1921,7 @@ func (m *Manager) ATPort() string {
 
 // CanExecuteAT 返回当前管理器是否已启动，可接受 AT 命令。
 func (m *Manager) CanExecuteAT() bool {
-	return m.runsATRuntime() && m.HasATPort() && m.running
+	return m.runsATRuntime() && m.HasATPort() && m.isRunning()
 }
 
 func (m *Manager) SetAPDUArbiter(arbiter *apduarbiter.Arbiter) {

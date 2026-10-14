@@ -76,7 +76,8 @@ func publicSMSReceived(value events.EventSMSReceived) eventhost.SMSReceived {
 func publicSMSSent(value events.EventSMSSent) eventhost.SMSSent {
 	return eventhost.SMSSent{
 		DevID: value.DevID, TargetURI: value.TargetURI, Content: value.Content,
-		Time: value.Time, TotalParts: value.TotalParts,
+		Time: value.Time, TotalParts: value.TotalParts, MessageID: value.MessageID,
+		ICCID: value.ICCID, IMSI: value.IMSI,
 	}
 }
 

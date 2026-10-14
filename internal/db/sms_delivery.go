@@ -78,38 +78,6 @@ type SMSDeliveryStatus struct {
 	Parts      []SMSDeliveryPart `json:"parts"`
 }
 
-func CreateSMSDelivery(messageID, imsi, deviceID, peer, content string, partsTotal int, at time.Time) error {
-	if DB == nil {
-		return nil
-	}
-	messageID = strings.TrimSpace(messageID)
-	if messageID == "" {
-		return errors.New("message_id 不能为空")
-	}
-	if at.IsZero() {
-		at = time.Now()
-	}
-	imsi = strings.TrimSpace(imsi)
-	row := SMSDelivery{
-		MessageID:  messageID,
-		IMSI:       imsi,
-		ICCID:      GetICCIDForIMSI(imsi),
-		DeviceID:   strings.TrimSpace(deviceID),
-		Peer:       strings.TrimSpace(peer),
-		Content:    content,
-		PartsTotal: partsTotal,
-		Acks:       0,
-		State:      SMSDeliveryStatePending,
-		LastError:  "",
-		CreatedAt:  at,
-		UpdatedAt:  at,
-	}
-	return DB.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "message_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"imsi", "iccid", "device_id", "peer", "content", "parts_total", "state", "last_error", "updated_at"}),
-	}).Create(&row).Error
-}
-
 func UpsertSMSDeliveryPart(messageID string, partNo int, callID string, rpMR int, state string, sentAt time.Time) error {
 	if DB == nil {
 		return nil

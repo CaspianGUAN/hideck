@@ -5,9 +5,12 @@ import (
 	"sync"
 )
 
-// FastReauthStore keeps EAP-AKA' fast reauthentication material across a new
-// IKE SA. RFC 7296 2.8.3 requires a fresh IKE_SA_INIT/IKE_AUTH; the identity
-// is reused there, not injected onto the old SA.
+// FastReauthStore records EAP-AKA fast reauthentication material issued by
+// the AAA. The identity is deliberately not replayed on reconnect: the engine's
+// AKA-Reauthentication handler reads AT_COUNTER/AT_NONCE_S outside AT_ENCR_DATA
+// (RFC 4187 9.7 nests them), so every fast reauth attempt failed and cost a
+// rejected IKE_AUTH before the fallback. Full EAP-AKA is used instead.
+// ponytail: re-enable identity replay once the handler decrypts AT_ENCR_DATA.
 type FastReauthStore struct {
 	mu    sync.Mutex
 	id    string
@@ -33,18 +36,6 @@ func (store *FastReauthStore) Capture() func(string, []byte, []byte, []byte) {
 func (store *FastReauthStore) Apply(cfg *SessionConfig) {
 	if store == nil || cfg == nil {
 		return
-	}
-	store.mu.Lock()
-	id := store.id
-	mk := append([]byte(nil), store.mk...)
-	kAut := append([]byte(nil), store.kAut...)
-	kEncr := append([]byte(nil), store.kEncr...)
-	store.mu.Unlock()
-	if id != "" {
-		cfg.FastReauthID = id
-		cfg.FastReauthMK = mk
-		cfg.FastReauthKAut = kAut
-		cfg.FastReauthKEncr = kEncr
 	}
 	capture := store.Capture()
 	if cfg.OnFastReauthUpdate == nil {

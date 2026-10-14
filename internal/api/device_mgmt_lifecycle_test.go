@@ -64,6 +64,29 @@ func TestApplyLifecycleToListItemDerivesRadioRegistered(t *testing.T) {
 	}
 }
 
+func TestDeviceMgmtListItemJSONIncludesVoWiFiActive(t *testing.T) {
+	health := device.WiFiCallingHealthSnapshot{State: "healthy", Active: true, Measured: true}
+	body, err := json.Marshal(deviceMgmtListItem{
+		ID:           "dev1",
+		VoWiFiActive: true,
+		VoWiFiHealth: &health,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["vowifi_active"] != true {
+		t.Fatalf("vowifi_active=%v want true in %s", payload["vowifi_active"], body)
+	}
+	healthPayload, ok := payload["vowifi_health"].(map[string]any)
+	if !ok || healthPayload["state"] != "healthy" {
+		t.Fatalf("vowifi_health=%v want state=healthy in %s", payload["vowifi_health"], body)
+	}
+}
+
 func TestVoWiFiRuntimeDTOExportsReadinessFields(t *testing.T) {
 	dto := runtimeStateToDTO(runtimehost.State{
 		Phase:      runtimehost.PhaseSIMReady,

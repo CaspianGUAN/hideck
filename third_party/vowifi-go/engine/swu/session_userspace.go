@@ -184,7 +184,6 @@ func (e *userspaceInnerPacketEndpoint) readOuterESP() {
 }
 
 func (e *userspaceInnerPacketEndpoint) handleOuterESP(packet []byte) {
-	e.session.markInboundActivity()
 	e.stats.espIn.Add(1)
 	inner, spi, err := e.session.decapsulateOuterESP(packet)
 	e.stats.lastInSPI.Store(spi)

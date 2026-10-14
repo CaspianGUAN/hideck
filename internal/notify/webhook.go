@@ -31,6 +31,7 @@ type webhookPayloadMeta struct {
 	DeviceName  string `json:"device_name,omitempty"`
 	DeviceLabel string `json:"device_label"`
 	Number      string `json:"number,omitempty"`
+	LocalNumber string `json:"local_number,omitempty"`
 	ContactName string `json:"contact_name,omitempty"`
 	Attribution string `json:"attribution,omitempty"`
 	Event       string `json:"event"`
@@ -150,6 +151,7 @@ func (w *WebhookChannel) SendWithContextDetailed(ctx NotificationContext) (SendW
 			DeviceName:  strings.TrimSpace(ctx.DeviceName),
 			DeviceLabel: ctx.DeviceLabel(),
 			Number:      strings.TrimSpace(ctx.Number),
+			LocalNumber: strings.TrimSpace(ctx.LocalNumber),
 			ContactName: strings.TrimSpace(ctx.ContactName),
 			Attribution: strings.TrimSpace(ctx.Attribution),
 			Event:       event,
@@ -201,6 +203,7 @@ func (w *WebhookChannel) renderText(ctx NotificationContext) (rendered string, e
 		"event":        strings.TrimSpace(ctx.Event),
 		"timestamp":    ctx.Timestamp.Format(time.RFC3339),
 		"number":       strings.TrimSpace(ctx.Number),
+		"local_number": strings.TrimSpace(ctx.LocalNumber),
 		"contact_name": strings.TrimSpace(ctx.ContactName),
 		"attribution":  strings.TrimSpace(ctx.Attribution),
 		"device_id":    strings.TrimSpace(ctx.DeviceID),

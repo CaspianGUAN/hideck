@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/yibaiba/hideck/pkg/simidentity"
+
 	"golang.org/x/sync/singleflight"
 
 	"github.com/damonto/euicc-go/bertlv"
@@ -2180,10 +2182,7 @@ func (m *Manager) findAIDForICCID(targetICCID string) ([]byte, error) {
 }
 
 func normalizeICCIDValue(in string) string {
-	v := strings.TrimSpace(in)
-	v = strings.Trim(v, "\"")
-	v = strings.TrimRight(v, "Ff")
-	return v
+	return simidentity.CanonicalICCID(in)
 }
 
 func isTargetICCIDActive(targetICCID string, currentICCID string) bool {
@@ -2549,9 +2548,7 @@ type liveICCIDReader interface {
 }
 
 func normalizeICCIDForSwitchCompare(value string) string {
-	value = strings.ToUpper(strings.TrimSpace(value))
-	value = strings.ReplaceAll(value, " ", "")
-	return strings.TrimRight(value, "F")
+	return simidentity.CanonicalICCID(value)
 }
 
 func (m *Manager) shouldForcePostSwitchSIMReload(ctx context.Context, targetICCID string) (bool, string) {

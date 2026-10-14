@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+"${TRIM_APPDEST:?fnOS application directory is required}/bin/initialize"
+exec "$TRIM_APPDEST/bin/configure-entry" restore

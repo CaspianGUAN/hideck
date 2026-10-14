@@ -45,6 +45,37 @@ func TestOpenAPIDocumentsPersistentSMSReadState(t *testing.T) {
 	}
 }
 
+func TestOpenAPIDocumentsSMSEventsAndDeviceListVoWiFiActive(t *testing.T) {
+	data, err := os.ReadFile("openapi.hideck.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	paths := openAPIMap(t, document, "paths")
+	if paths["/sms/events"] == nil {
+		t.Fatal("OpenAPI missing /sms/events")
+	}
+	events := openAPIMap(t, paths, "/sms/events")
+	get := openAPIMap(t, events, "get")
+	parameters, ok := get["parameters"].([]any)
+	if !ok || !hasOpenAPIParameter(parameters, "Last-Event-ID") || !hasOpenAPIParameter(parameters, "after_id") {
+		t.Fatal("OpenAPI GET /sms/events missing Last-Event-ID or after_id")
+	}
+	components := openAPIMap(t, document, "components")
+	schemas := openAPIMap(t, components, "schemas")
+	listItem := openAPIMap(t, schemas, "DeviceMgmtListItem")
+	listProperties := openAPIMap(t, listItem, "properties")
+	if listProperties["vowifi_active"] == nil {
+		t.Fatal("OpenAPI DeviceMgmtListItem missing vowifi_active")
+	}
+	if listProperties["vowifi_health"] == nil {
+		t.Fatal("OpenAPI DeviceMgmtListItem missing vowifi_health")
+	}
+}
+
 func TestOpenAPIDocumentsVoWiFiMOSMSReadiness(t *testing.T) {
 	data, err := os.ReadFile("openapi.hideck.yaml")
 	if err != nil {

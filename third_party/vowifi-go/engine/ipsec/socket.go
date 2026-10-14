@@ -53,6 +53,7 @@ type SocketManager struct {
 	started   bool
 	stopped   bool
 	startErr  error
+	natT      bool // Protected by remoteMu; retained across peer port changes.
 }
 
 // NewSocketManager resolves remote, binds local, and prepares a transport.
@@ -178,9 +179,17 @@ func (s *SocketManager) RemotePort() int {
 func (s *SocketManager) SetRemotePort(port int) {
 	s.remoteMu.Lock()
 	if s.RemoteAddr != nil {
+		s.natT = s.natT || s.RemoteAddr.Port == 4500 || port == 4500
 		s.RemoteAddr.Port = port
 	}
 	s.remoteMu.Unlock()
+}
+
+func (s *SocketManager) natTEnabled() bool {
+	s.remoteMu.Lock()
+	defer s.remoteMu.Unlock()
+	return s.natT || (s.RemoteAddr != nil && s.RemoteAddr.Port == 4500) ||
+		(s.LocalAddr != nil && s.LocalAddr.Port == 4500)
 }
 
 func (s *SocketManager) LocalAddrString() string {

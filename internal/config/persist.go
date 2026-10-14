@@ -104,6 +104,18 @@ func UpdateNotificationInFile(path string, notifications NotificationConfigs) er
 		"payload_template": notifications.WeCom.PayloadTemplate,
 	}
 
+	filters := make(map[string]any)
+	for channel, devices := range notifications.DeviceFilters {
+		if len(devices) > 0 {
+			filters[channel] = devices
+		}
+	}
+	if len(filters) == 0 {
+		delete(root, "notification_device_filters")
+	} else {
+		root["notification_device_filters"] = filters
+	}
+
 	out, err := yaml.Marshal(root)
 	if err != nil {
 		return fmt.Errorf("序列化配置文件失败: %w", err)

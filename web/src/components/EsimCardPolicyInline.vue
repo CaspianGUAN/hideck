@@ -177,6 +177,7 @@ const {
             <el-option label="WiFi calling" value="wifi" />
             <el-option label="蜂窝数据" value="cellular" />
             <el-option label="VoLTE" value="volte" />
+            <el-option label="模组直拨" value="modem_voice" />
           </el-select>
         </div>
         <div
@@ -198,7 +199,7 @@ const {
       </div>
       <div class="flex items-center justify-between rounded-[var(--ui-radius-lg)] px-3 py-2 bg-[var(--ui-surface)]">
         <span class="text-sm text-[var(--ui-text)]">
-          {{ (local.phone_mode ?? 'wifi') === 'wifi' ? '启动' : '软件电话' }}
+          {{ (local.phone_mode ?? 'wifi') === 'wifi' ? '启动' : '电话服务' }}
           <small class="block text-xs text-[var(--ui-muted)] font-normal">{{ (local.phone_mode ?? 'wifi') === 'wifi'
             ? '打开后开始注册。关掉只停服务，仍是 WiFi calling'
             : '开启后可拨号。关掉只停服务，通话方式不变' }}</small>
@@ -225,6 +226,7 @@ const {
         <template v-else-if="(local.phone_mode ?? 'wifi') === 'volte'">
           原生 VoLTE 驻网。飞行关闭后由模组 IMS 打电话，网络开关只控制流量。
         </template>
+        <template v-else-if="local.phone_mode === 'modem_voice'">模组直拨需要驻网及已适配的 USB 音频，请到电话页查看准备状态。</template>
         <template v-else>已注册运营商。打开网络才会用数据。</template>
       </div>
       <div v-if="phoneModeFailed" class="text-xs text-orange-500">通话方式未生效</div>

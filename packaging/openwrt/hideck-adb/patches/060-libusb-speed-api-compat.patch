@@ -1,0 +1,38 @@
+From: HiDeck maintainers
+Subject: Gate USB 20-Gbit speed metadata on libusb 1.0.29's API
+
+OpenWrt 24.10 supplies libusb 1.0.27. Only optional SuperSpeedPlus speed
+reporting uses these newer symbols; USB enumeration and transfers are unchanged.
+Build with libusb >= 1.0.29 to retain the additional speed metadata.
+
+--- a/vendor/adb/client/usb_libusb_device.cpp
++++ b/vendor/adb/client/usb_libusb_device.cpp
+@@ -371,7 +371,9 @@
+         case LIBUSB_SPEED_SUPER_PLUS:
+             return 10000;
++#if LIBUSB_API_VERSION >= 0x0100010B
+         case LIBUSB_SPEED_SUPER_PLUS_X2:
+             return 20000;
++#endif
+         case LIBUSB_SPEED_UNKNOWN:
+         default:
+             return 0;
+@@ -406,2 +408,3 @@
++#if LIBUSB_API_VERSION >= 0x0100010B
+ static uint64_t ExtractMaxSuperSpeedPlus(libusb_ssplus_usb_device_capability_descriptor* cap) {
+     // The exponents is one of {bytes, kB, MB, or GB}. We express speed in MB so we use a 0
+@@ -416,2 +419,3 @@
+-    return max_speed;
+-}
++    return max_speed;
++}
++#endif
+@@ -439,2 +443,3 @@
++#if LIBUSB_API_VERSION >= 0x0100010B
+             case LIBUSB_BT_SUPERSPEED_PLUS_CAPABILITY: {
+                 libusb_ssplus_usb_device_capability_descriptor* cap = nullptr;
+@@ -446,3 +451,4 @@
+             } break;
++#endif
+             default:
+                 break;

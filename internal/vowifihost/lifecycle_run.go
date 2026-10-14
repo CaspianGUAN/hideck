@@ -91,7 +91,10 @@ func (m *Manager) enableRuntime(ctx context.Context, req runtimeEnableRequest) (
 	startCtx := runtimehost.WithTraceID(baseCtx, traceID)
 	startedAt := time.Now()
 
-	startClaim := m.BeginStart(deviceID)
+	startClaim, err := m.beginRuntimeStart(startCtx, deviceID)
+	if err != nil {
+		return err
+	}
 	if startClaim.Active {
 		return nil
 	}
@@ -101,17 +104,18 @@ func (m *Manager) enableRuntime(ctx context.Context, req runtimeEnableRequest) (
 	if !startClaim.Accepted {
 		return fmt.Errorf("设备 %s 的 VoWiFi 启动声明失败", deviceID)
 	}
-	m.BeginWiFiCallingHealth(deviceID)
 	startupEpoch := startClaim.Epoch
 	startFinalized := false
 	defer func() {
 		if !startFinalized {
-			m.FailWiFiCallingHealthStart(deviceID, retErr)
 			m.FailStart(deviceID, startupEpoch, runtimehost.State{}, retErr)
 		}
 	}()
 
 	preparedStart, err := m.PrepareStart(deviceID, traceID, req.OverrideEPDG)
+	if startCtx.Err() != nil || !m.ShouldRun(deviceID, startupEpoch) {
+		return context.Canceled
+	}
 	if err != nil {
 		return err
 	}
@@ -121,6 +125,15 @@ func (m *Manager) enableRuntime(ctx context.Context, req runtimeEnableRequest) (
 		return fmt.Errorf("设备 %s 的 VoWiFi modem adapter 未准备", deviceID)
 	}
 	initialState := preparedStart.StartupState
+	m.RecordStartupStateForEpoch(deviceID, startupEpoch, initialState)
+	stateMu := m.stateLock(deviceID)
+	stateMu.Lock()
+	if startCtx.Err() != nil || !m.ShouldRun(deviceID, startupEpoch) {
+		stateMu.Unlock()
+		return context.Canceled
+	}
+	beforeStart := m.BeforeStart(deviceID, modemIface, preparedStart.Proxy)
+	stateMu.Unlock()
 
 	result, err := m.StartRuntime(startCtx, RuntimeStartRequest{
 		DeviceID:      deviceID,
@@ -133,10 +146,13 @@ func (m *Manager) enableRuntime(ctx context.Context, req runtimeEnableRequest) (
 		Dataplane:     runtimehost.DataplanePolicy{Mode: swu.DataplaneModeUserspace},
 		DeliveryStore: m.deliveryStore,
 		Dispatch:      m.dispatcher,
-		BeforeStart:   m.BeforeStart(deviceID, modemIface, preparedStart.Proxy),
+		BeforeStart:   beforeStart,
 		TunnelFactory: preparedStart.TunnelFactory,
 	})
 	if err != nil {
+		if startCtx.Err() != nil || !m.ShouldRun(deviceID, startupEpoch) {
+			return context.Canceled
+		}
 		state, ok := m.State(deviceID)
 		if !ok {
 			state = initialState
@@ -163,7 +179,6 @@ func (m *Manager) enableRuntime(ctx context.Context, req runtimeEnableRequest) (
 	}
 
 	startFinalized = true
-	m.ClearStartupStateAndBroadcast(deviceID)
 	logger.Info("VoWiFi SWu 隧道已建立，正在等待 IMS 注册",
 		"trace_id", traceID, "device", deviceID, "cost_ms", time.Since(startedAt).Milliseconds())
 	logger.Debug("EnableVoWiFi 已进入后台 IMS 注册阶段",
@@ -263,6 +278,9 @@ func (m *Manager) enableWhenReady(ctx context.Context, deviceID string, timeout 
 	}
 	if err := adapter.WaitQMICoreReady(deviceID, timeout); err != nil {
 		return fmt.Errorf("等待设备 %s QMI Core 就绪失败(%s): %w", deviceID, reason, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := adapter.WaitWorkerReady(deviceID, timeout); err != nil {
 		return fmt.Errorf("等待设备 %s 就绪失败(%s): %w", deviceID, reason, err)

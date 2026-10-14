@@ -159,8 +159,22 @@ func (adapter deliveryStoreSIPAdapter) MarkSMSDeliveryPartSIPResult(
 	)
 }
 
-func (adapter deliveryStoreAdapter) CreateSMSDelivery(messageID, imsi, deviceID, peer, content string, parts int, at time.Time) error {
+func (adapter deliveryStoreAdapter) CreateSMSDelivery(
+	messageID, imsi, deviceID, peer, content string,
+	parts int,
+	at time.Time,
+) error {
 	return adapter.store.CreateSMSDelivery(messageID, imsi, deviceID, peer, content, parts, at)
+}
+
+func (adapter deliveryStoreAdapter) CreateSMSDeliveryForIdentity(record smsdelivery.DeliveryRecord) error {
+	if store, ok := adapter.store.(smsdelivery.IdentityStore); ok {
+		return store.CreateSMSDeliveryForIdentity(record)
+	}
+	return adapter.CreateSMSDelivery(
+		record.MessageID, record.IMSI, record.DeviceID,
+		record.Peer, record.Content, record.PartsTotal, record.At,
+	)
 }
 
 func (adapter deliveryStoreAdapter) UpsertSMSDeliveryPart(messageID string, part int, callID string, rpMR int, state string, at time.Time) error {
@@ -188,7 +202,7 @@ func (adapter deliveryStoreAdapter) GetSMSDeliveryStatus(id string) (*imscore.De
 		return nil, err
 	}
 	result := &imscore.DeliveryStatus{
-		MessageID: status.MessageID, IMSI: status.IMSI, DeviceID: status.DeviceID,
+		MessageID: status.MessageID, IMSI: status.IMSI, ICCID: status.ICCID, DeviceID: status.DeviceID,
 		Peer: status.Peer, Content: status.Content, PartsTotal: status.PartsTotal,
 		Acks: status.Acks, State: status.State, LastError: status.LastError,
 		CreatedAt: status.CreatedAt, UpdatedAt: status.UpdatedAt,

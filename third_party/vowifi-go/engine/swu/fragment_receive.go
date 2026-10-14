@@ -26,13 +26,16 @@ func (s *Session) decryptSKF(
 		return nil, 0, 0, msgID, errors.New("non-initial IKE fragment declares a next payload")
 	}
 	plaintext, err = s.decryptSKFBody(data, header)
+	if err == nil {
+		s.markInboundActivity()
+	}
 	return plaintext, fragNum, totalFrags, msgID, err
 }
 
 func (s *Session) decryptSKFBody(data []byte, header *ikev2.IKEHeader) ([]byte, error) {
 	cipher, integrityKey, integrity, err := s.fragmentCipherMaterial(header.Flags)
 	if err != nil {
-		return nil, err
+		return nil, &localIKEError{err}
 	}
 	offset := ikev2.IKE_HEADER_LEN + 8
 	if len(data) < offset+cipher.IVSize() {
@@ -56,9 +59,18 @@ func (s *Session) decryptSKFBody(data []byte, header *ikev2.IKEHeader) ([]byte, 
 	}
 	padded, err := cipher.Open(nil, ciphertext, iv, aad)
 	if err != nil {
-		return nil, fmt.Errorf("decrypt SKF: %w", err)
+		err = fmt.Errorf("decrypt SKF: %w", err)
+		if s.aead {
+			return nil, err
+		}
+		// The integrity check already passed, so this is the peer's fragment.
+		return nil, &authenticatedSyntaxError{err: err}
 	}
-	return unpadIKEPlaintext(padded)
+	plain, err := unpadIKEPlaintext(padded)
+	if err != nil {
+		return nil, &authenticatedSyntaxError{err: err}
+	}
+	return plain, nil
 }
 
 func decodeSKFHeaders(data []byte) (*ikev2.IKEHeader, *ikev2.PayloadHeader, error) {
@@ -122,7 +134,7 @@ func (s *Session) normalizeReassembledIKE(
 	if err != nil {
 		return nil, false, err
 	}
-	payloads, err := ikev2.DecodePayloadChainWithFirst(firstPayload, reassembled)
+	payloads, err := decodeAuthenticatedPayloads(firstPayload, reassembled)
 	if err != nil {
 		return nil, false, fmt.Errorf("decode reassembled IKE payloads: %w", err)
 	}

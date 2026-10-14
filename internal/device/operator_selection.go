@@ -46,6 +46,13 @@ func (w *Worker) ScanOperators(ctx context.Context) ([]backend.OperatorCandidate
 	if w == nil {
 		return nil, ErrWorkerNil
 	}
+	if w.Pool != nil {
+		release, err := w.Pool.AcquireDeviceOperation(w.ID)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+	}
 	if w.Backend == nil {
 		return nil, ErrBackendNotAvailable
 	}
@@ -251,6 +258,13 @@ func (w *Worker) GetOperatorSelection(ctx context.Context) (backend.OperatorSele
 func (w *Worker) SetOperatorSelection(ctx context.Context, req backend.SetOperatorSelectionRequest) (backend.OperatorSelection, error) {
 	if w == nil {
 		return backend.OperatorSelection{}, ErrWorkerNil
+	}
+	if w.Pool != nil {
+		release, err := w.Pool.AcquireDeviceOperation(w.ID)
+		if err != nil {
+			return backend.OperatorSelection{}, err
+		}
+		defer release()
 	}
 	if w.Backend == nil {
 		return backend.OperatorSelection{}, ErrBackendNotAvailable

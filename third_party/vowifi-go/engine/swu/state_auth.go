@@ -316,6 +316,8 @@ func (s *Session) runIKEAuthLoop(ctx context.Context) error {
 	s.setState(stateAuthenticating)
 	s.stage = stageInit
 	s.eapSuccessReceived = false
+	s.deviceIdentityRequested = false
+	s.deviceIdentityEAPVerified = false
 
 	for {
 		switch s.stage {
@@ -397,6 +399,23 @@ func (s *Session) advanceIKEAuthStage() error {
 
 // sendIKEAuthRequest encrypts and sends an IKE_AUTH request.
 func (s *Session) sendIKEAuthRequest(payloads []ikev2.Payload) error {
+	reply, err := s.pendingDeviceIdentityReply()
+	if err != nil {
+		return err
+	}
+	if reply != nil {
+		payloads = append(append([]ikev2.Payload(nil), payloads...), reply)
+	}
+	if err := s.sendIKEAuthPayloads(payloads); err != nil {
+		return err
+	}
+	if reply != nil {
+		s.deviceIdentityRequested = false
+	}
+	return nil
+}
+
+func (s *Session) sendIKEAuthPayloads(payloads []ikev2.Payload) error {
 	if s.shouldFragment(payloads) {
 		packets, err := s.fragmentMessage(payloads, ikev2.IKE_AUTH)
 		if err != nil {
@@ -509,6 +528,9 @@ func (s *Session) buildIKEAuthInitPayloads() ([]ikev2.Payload, error) {
 	}
 	payloads = append(payloads, tsi, tsr, eapOnly, mobike, ticket)
 	payloads = append(payloads, s.initialContactNotify()...)
+	if s.cfg.WithholdDeviceIdentity {
+		return payloads, nil
+	}
 	devicePayloads, err := s.deviceIdentityPayloads()
 	if err != nil {
 		return nil, err
@@ -590,26 +612,8 @@ func (s *Session) initialIKEIdentity() (string, error) {
 }
 
 func (s *Session) deviceIdentityPayloads() ([]ikev2.Payload, error) {
-	imei := strings.TrimSpace(s.cfg.DeviceIdentityIMEI)
-	if imei == "" && s.cfg.EnableDeviceIdentitySpoof {
-		imsi, err := requiredConfiguredIMSI(s.cfg)
-		if err != nil {
-			return nil, err
-		}
-		imei = spoofAppleIMEI(imsi)
-	}
-	if imei == "" {
-		logger.Info("IKE_AUTH sends no device identity")
-		return nil, nil
-	}
-	if len(imei) >= 8 {
-		// The TAC (first 8 digits) names the device model; ePDGs that
-		// whitelist handsets judge it, not the serial.
-		logger.Info("IKE_AUTH device identity", zap.String("tac", imei[:8]),
-			zap.Bool("generated", strings.TrimSpace(s.cfg.DeviceIdentityIMEI) == ""))
-	}
-	encoded, err := encodeIMEITBCD(imei)
-	if err != nil {
+	encoded, err := s.deviceIdentityValue()
+	if err != nil || len(encoded) == 0 {
 		return nil, err
 	}
 	// TS 24.302 8.2.9.2: Length (2 octets, covering type and value),
@@ -685,9 +689,11 @@ func (s *Session) applyEAPHandlingResult(payloads []ikev2.Payload) (string, erro
 		}
 	}
 	logIKEAuthNotifies(payloads)
-	if s.cfg != nil && s.cfg.IKEAuthMinimal && ikeAuthRequestsDeviceIdentity(payloads) {
-		s.deviceIdentityAsked = true
+	requested, err := hasDeviceIdentityRequest(payloads)
+	if err != nil {
+		return "", err
 	}
+	s.deviceIdentityRequested = s.deviceIdentityRequested || requested
 	for _, pl := range payloads {
 		switch pl.Type() {
 		case ikev2.PayloadEAP:
@@ -704,10 +710,6 @@ func (s *Session) applyEAPHandlingResult(payloads []ikev2.Payload) (string, erro
 			}
 			if len(response) == 0 {
 				return "", errors.New("swu: EAP request produced no response payload")
-			}
-			response, err = s.withRequestedDeviceIdentity(response)
-			if err != nil {
-				return "", err
 			}
 			if err := s.sendIKEAuthRequest(response); err != nil {
 				return "", err
@@ -1037,27 +1039,4 @@ func logIKEAuthNotifies(payloads []ikev2.Payload) {
 		logger.Info("IKE_AUTH notify from ePDG", zap.Uint16("type", notify.NotifyType),
 			zap.String("name", name), zap.Int("data_len", len(notify.NotifyData)))
 	}
-}
-
-func ikeAuthRequestsDeviceIdentity(payloads []ikev2.Payload) bool {
-	for _, payload := range payloads {
-		if notify, ok := payload.(*ikev2.EncryptedPayloadNotify); ok && notify.NotifyType == ikev2.DEVICE_IDENTITY_3GPP {
-			return true
-		}
-	}
-	return false
-}
-
-// withRequestedDeviceIdentity appends the 3GPP DEVICE_IDENTITY notify to the
-// EAP response that follows an ePDG request for it (TS 24.302 7.2.2).
-func (s *Session) withRequestedDeviceIdentity(response []ikev2.Payload) ([]ikev2.Payload, error) {
-	if !s.deviceIdentityAsked {
-		return response, nil
-	}
-	s.deviceIdentityAsked = false
-	identity, err := s.deviceIdentityPayloads()
-	if err != nil || len(identity) == 0 {
-		return response, err
-	}
-	return append(response, identity[0]), nil // DEVICE_IDENTITY_3GPP only
 }

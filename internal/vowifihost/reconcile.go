@@ -47,6 +47,9 @@ func (m *Manager) ScheduleDesiredRecover(ctx context.Context, req DesiredRecover
 	if now.IsZero() {
 		now = time.Now()
 	}
+	stateMu := m.stateLock(deviceID)
+	stateMu.Lock()
+	defer stateMu.Unlock()
 	if !m.DesiredRecoverable(deviceID) {
 		return false
 	}
@@ -56,18 +59,33 @@ func (m *Manager) ScheduleDesiredRecover(ctx context.Context, req DesiredRecover
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	generation := req.Generation
+	if generation == 0 {
+		generation = m.CurrentLifecycleGeneration(deviceID)
+		if generation == 0 {
+			generation = m.NextLifecycleGeneration(deviceID)
+		}
+	}
 
 	logger.Warn("VoWiFi 目标态恢复开始", "event", "VOWIFI_DESIRED_RECOVER", "device", deviceID, "reason", reason)
-	go func() {
-		err := m.Recover(ctx, LifecycleRecoverRequest{
-			DeviceID:     deviceID,
-			Reason:       reason,
-			OverrideEPDG: req.OverrideEPDG,
-			Generation:   req.Generation,
-		})
-		if req.OnResult != nil {
-			req.OnResult(deviceID, reason, err)
-		}
-	}()
+	runRequest := req
+	runRequest.DeviceID, runRequest.Reason, runRequest.Generation = deviceID, reason, generation
+	go m.runDesiredRecover(ctx, runRequest)
 	return true
+}
+
+func (m *Manager) runDesiredRecover(ctx context.Context, req DesiredRecoverRequest) {
+	err := m.Recover(ctx, LifecycleRecoverRequest{
+		DeviceID: req.DeviceID, Reason: req.Reason,
+		OverrideEPDG: req.OverrideEPDG, Generation: req.Generation,
+	})
+	stateMu := m.stateLock(req.DeviceID)
+	stateMu.Lock()
+	defer stateMu.Unlock()
+	if m.CurrentLifecycleGeneration(req.DeviceID) != req.Generation {
+		return
+	}
+	if req.OnResult != nil {
+		req.OnResult(req.DeviceID, req.Reason, err)
+	}
 }

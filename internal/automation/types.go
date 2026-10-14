@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/yibaiba/hideck/pkg/simidentity"
 )
 
 const (
@@ -200,5 +202,5 @@ func AdvanceNextRun(task Task, now time.Time) (time.Time, error) {
 }
 
 func canonicalICCID(value string) string {
-	return strings.TrimRight(strings.Trim(strings.TrimSpace(value), "\""), "Ff")
+	return simidentity.CanonicalICCID(value)
 }

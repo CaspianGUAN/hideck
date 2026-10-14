@@ -1,0 +1,9 @@
+HiDeck module direct calling
+
+This optional package installs ALSA utilities, the matching OpenWrt USB audio
+driver, and /usr/libexec/hideck/adb. It does not replace /usr/bin/adb, enable
+module ADB, reboot a module, or change the selected calling mode.
+
+The module-side voice runtime is embedded in HiDeck. Supported firmware:
+QDC507GLEFM21. OpenWrt packages must match the OS series and CPU architecture;
+kmod-usb-audio must match the running kernel and comes from its configured feed.

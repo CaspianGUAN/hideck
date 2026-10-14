@@ -25,6 +25,31 @@ func TestBuildSubmitTPDUsPreservesTextAndDestination(t *testing.T) {
 	}
 }
 
+func TestBuildSubmitTPDUsUsesInternationalTypeOnlyForExplicitPlus(t *testing.T) {
+	for _, test := range []struct {
+		to  string
+		ton tpdu.TypeOfNumber
+	}{
+		{to: "13800138000", ton: tpdu.TonUnknown},
+		{to: "+8613800138000", ton: tpdu.TonInternational},
+		{to: "10086", ton: tpdu.TonUnknown},
+	} {
+		t.Run(test.to, func(t *testing.T) {
+			encoded, _, err := BuildSubmitTPDUs(test.to, "hello")
+			if err != nil {
+				t.Fatal(err)
+			}
+			part := tpdu.TPDU{Direction: tpdu.MO}
+			if err := part.UnmarshalBinary(encoded[0]); err != nil {
+				t.Fatal(err)
+			}
+			if part.DA.TypeOfNumber() != test.ton || part.DA.Number() != test.to {
+				t.Fatalf("address = %q, TON = %d; want %q, %d", part.DA.Number(), part.DA.TypeOfNumber(), test.to, test.ton)
+			}
+		})
+	}
+}
+
 func TestBuildSubmitTPDUsUsesRealUCS2AndShortCodeTON(t *testing.T) {
 	parts, err := BuildSubmitTPDUObjectsWithOptions("10086", "你好", SubmitOptions{Encoding: "ucs2"})
 	if err != nil {

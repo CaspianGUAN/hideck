@@ -1,0 +1,10 @@
+{
+  "include": [
+    {"id":"24.10.8-x86-64","release":"24.10.8","target":"x86/64","arch":"amd64","sdk":"openwrt-sdk-24.10.8-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst","sha256":"ac4a0405d2eea821b06f93c14ba13ffa90ad0457648903df7dde02570027ab21"},
+    {"id":"24.10.8-armsr-armv8","release":"24.10.8","target":"armsr/armv8","arch":"arm64","sdk":"openwrt-sdk-24.10.8-armsr-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst","sha256":"5f430f5b30c9ea6dc472710356c139abf916b7ebd5de14e108e9cc204f40a2a4"},
+    {"id":"24.10.8-mvebu-cortexa9","release":"24.10.8","target":"mvebu/cortexa9","arch":"armv7","sdk":"openwrt-sdk-24.10.8-mvebu-cortexa9_gcc-13.3.0_musl_eabi.Linux-x86_64.tar.zst","sha256":"4a2ce19ffe18f615135849ba5e0a4b0b83aa324b2551984c38e2df782307860e"},
+    {"id":"25.12.5-x86-64","release":"25.12.5","target":"x86/64","arch":"amd64","sdk":"openwrt-sdk-25.12.5-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst","sha256":"0c8df0151a1e88feb7c03d694d61f6a18d51872815b7c811d76e2b77504d5e9c"},
+    {"id":"25.12.5-armsr-armv8","release":"25.12.5","target":"armsr/armv8","arch":"arm64","sdk":"openwrt-sdk-25.12.5-armsr-armv8_gcc-14.3.0_musl.Linux-x86_64.tar.zst","sha256":"1b0316604a3e820b2b008a1baff3f9dac6716af942bef800930e58c7de98c98b"},
+    {"id":"25.12.5-mvebu-cortexa9","release":"25.12.5","target":"mvebu/cortexa9","arch":"armv7","sdk":"openwrt-sdk-25.12.5-mvebu-cortexa9_gcc-14.3.0_musl_eabi.Linux-x86_64.tar.zst","sha256":"6b24abad1feee5f071a53872ed355ae4c2a90017b00ff99907183b56b31d995a"}
+  ]
+}

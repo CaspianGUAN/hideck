@@ -42,7 +42,10 @@ func TestLifecycleControllerSwitchBeginPreemptsInFlightEnable(t *testing.T) {
 	c.TestRun = func(ctx context.Context, cmd LifecycleCommand) error {
 		started <- cmd
 		if cmd.Kind == LifecycleCommandEnable {
-			<-enableRelease
+			select {
+			case <-ctx.Done():
+			case <-enableRelease:
+			}
 		}
 		return nil
 	}

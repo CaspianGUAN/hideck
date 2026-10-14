@@ -1,3 +1,4 @@
+import axios from 'axios'
 import { api } from '../stores/auth'
 import { callService } from './http'
 import type {
@@ -21,8 +22,20 @@ export const upstreamProxyService = {
   probe(id: string) {
     return callService(async () => {
       const proxyId = encodeURIComponent(id)
-      const res = await api.post(`/upstream-proxies/${proxyId}/actions/probe`)
-      return res.data as UpstreamProxyProbeResponse
+      try {
+        const res = await api.post(`/upstream-proxies/${proxyId}/actions/probe`)
+        return res.data as UpstreamProxyProbeResponse
+      } catch (error) {
+        // A completed probe can report UDP failure and still contain a valid
+        // HTTPS exit observation. Preserve both, without treating it as healthy.
+        if (axios.isAxiosError(error) && error.response?.status === 502) {
+          const data = error.response.data as Partial<UpstreamProxyProbeResponse> | undefined
+          if (data?.status === 'error' && typeof data.result?.udp_relay_ok === 'boolean') {
+            return data as UpstreamProxyProbeResponse
+          }
+        }
+        throw error
+      }
     })
   },
 

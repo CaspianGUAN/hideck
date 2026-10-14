@@ -311,25 +311,34 @@ func TestEncapsulationLayout(t *testing.T) {
 
 func TestParseIKEPayload(t *testing.T) {
 	ike := fakeIKEInit()
-	if pkt, ok := parseIKEPayload(ike, len(ike)); !ok || !bytes.Equal(pkt, ike) {
+	if pkt, ok := parseIKEPayload(ike, len(ike), false); !ok || !bytes.Equal(pkt, ike) {
 		t.Error("plain IKE packet not classified as IKE")
 	}
 
 	// Non-ESP marker (RFC 3948): 4 zero bytes + IKE packet.
 	marked := append([]byte{0, 0, 0, 0}, ike...)
-	if pkt, ok := parseIKEPayload(marked, len(marked)); !ok || !bytes.Equal(pkt, ike) {
+	if pkt, ok := parseIKEPayload(marked, len(marked), true); !ok || !bytes.Equal(pkt, ike) {
 		t.Error("marked IKE packet not classified correctly")
 	}
 
 	// ESP frame: arbitrary bytes with a non-zero SPI.
 	esp := make([]byte, 40)
 	copy(esp, []byte{0xaa, 0xbb, 0xcc, 0xdd})
-	if _, ok := parseIKEPayload(esp, len(esp)); ok {
+	if _, ok := parseIKEPayload(esp, len(esp), true); ok {
 		t.Error("ESP frame misclassified as IKE")
 	}
 
+	// ESP on port 4500 whose encrypted bytes look like an IKEv2 header.
+	lookalike := append([]byte{0x0b, 0xe5, 0x02, 0x3b}, ike[4:]...)
+	if _, ok := parseIKEPayload(lookalike, len(lookalike), true); ok {
+		t.Error("ESP on port 4500 misclassified as unmarked IKE")
+	}
+	if _, ok := parseIKEPayload(lookalike, len(lookalike), false); !ok {
+		t.Error("unmarked IKE from port 500 not classified as IKE")
+	}
+
 	// NAT keepalive: single 0xff.
-	if _, ok := parseIKEPayload([]byte{0xff}, 1); ok {
+	if _, ok := parseIKEPayload([]byte{0xff}, 1, true); ok {
 		t.Error("NAT keepalive misclassified as IKE")
 	}
 }
@@ -512,6 +521,10 @@ func TestSocketManagerLoopback(t *testing.T) {
 	if err := server.Start(); err != nil {
 		t.Fatalf("start server: %v", err)
 	}
+	// Both endpoints use NAT-T, with ephemeral loopback ports standing in for
+	// the translated UDP endpoints.
+	client.SetRemotePort(4500)
+	client.SetRemotePort(int(server.LocalPort()))
 	if err := client.Start(); err != nil {
 		t.Fatalf("start client: %v", err)
 	}

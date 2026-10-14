@@ -100,6 +100,9 @@ func startScriptedVoiceRegistrar(t *testing.T, respond func(string) (int, string
 					extra = "P-Associated-URI: <sip:+15551234567@ims.example.com>\r\n" + extra
 				}
 			}
+			if strings.HasPrefix(request, "REGISTER ") && status >= 200 && status < 300 && !strings.Contains(extra, "Contact:") {
+				extra += "Contact: " + voiceTestHeader(request, "Contact") + "\r\n"
+			}
 			response := fmt.Sprintf("SIP/2.0 %d %s\r\nVia: %s\r\nCall-ID: %s\r\nCSeq: %s\r\n%sContent-Length: %d\r\n\r\n%s",
 				status, imscore.SIPStatusText(status), voiceTestHeader(request, "Via"),
 				voiceTestHeader(request, "Call-ID"), voiceTestHeader(request, "CSeq"), extra, len(body), body)

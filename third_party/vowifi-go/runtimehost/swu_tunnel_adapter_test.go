@@ -45,7 +45,7 @@ func TestSWUTunnelAdapterDoesNotRetryCanceledConnect(t *testing.T) {
 	}
 }
 
-func TestSWUTunnelAdapterRetriesTimeoutWithFreshSession(t *testing.T) {
+func TestSWUTunnelAdapterRetriesTimeoutAndKeepsSuccessfulSessionUntilShutdown(t *testing.T) {
 	manager := &retryEPDGManager{}
 	adapter := newSWUTunnelAdapter(swuTunnelAdapterConfig{
 		Manager: manager, DeviceID: "device-retry", SessionConfig: &swu.Config{},
@@ -61,8 +61,10 @@ func TestSWUTunnelAdapterRetriesTimeoutWithFreshSession(t *testing.T) {
 	if sessions[0] == sessions[1] || adapter.Session != sessions[1] {
 		t.Fatal("retry did not install a fresh managed session")
 	}
+	assertContextActive(t, manager.contextAt(1))
 	adapter.Shutdown()
 	adapter.Shutdown()
+	assertContextCanceled(t, manager.contextAt(1))
 	_, stops, _ = manager.snapshot()
 	if stops != 2 {
 		t.Fatalf("shutdown stops=%d, want 2", stops)
@@ -109,14 +111,16 @@ type retryEPDGManager struct {
 	waits    int
 	stops    int
 	sessions []*swu.Session
+	contexts []context.Context
 }
 
-func (manager *retryEPDGManager) Start(context.Context, string, *swu.Config) (*swu.Session, error) {
+func (manager *retryEPDGManager) Start(ctx context.Context, _ string, _ *swu.Config) (*swu.Session, error) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 	manager.starts++
 	session := swu.NewSession(&swu.Config{})
 	manager.sessions = append(manager.sessions, session)
+	manager.contexts = append(manager.contexts, ctx)
 	return session, nil
 }
 
@@ -141,6 +145,30 @@ func (manager *retryEPDGManager) snapshot() (int, int, []*swu.Session) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 	return manager.starts, manager.stops, append([]*swu.Session(nil), manager.sessions...)
+}
+
+func (manager *retryEPDGManager) contextAt(index int) context.Context {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	return manager.contexts[index]
+}
+
+func assertContextActive(t *testing.T, ctx context.Context) {
+	t.Helper()
+	select {
+	case <-ctx.Done():
+		t.Fatalf("session context ended after successful Connect: %v", ctx.Err())
+	default:
+	}
+}
+
+func assertContextCanceled(t *testing.T, ctx context.Context) {
+	t.Helper()
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("session context remained active after Shutdown")
+	}
 }
 
 type blockingRetryEPDGManager struct {

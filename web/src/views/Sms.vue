@@ -647,7 +647,7 @@ async function handleSendModal() {
     })
     if (!result.ok) throw new Error(result.error.message || '发送失败')
     const parts = result.data.partsTotal
-    ElMessage.success(`短信已发送${parts > 1 ? `（${parts}段）` : ''}`)
+    ElMessage.success(`短信已提交${parts > 1 ? `（${parts}段）` : ''}`)
     showSendModal.value = false
     setTimeout(async () => {
       await fetchMessagesAndThread()
@@ -895,6 +895,7 @@ async function confirmDeleteThread(thread: SmsThread) {
               联系人
             </el-button>
           </div>
+          <small class="text-xs text-[var(--ui-text-muted)]">号码会原样提交；发送国际号码时请明确输入 + 国家码。</small>
         </el-form-item>
         <el-form-item label="短信内容">
           <el-input

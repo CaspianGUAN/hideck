@@ -221,8 +221,10 @@ func (s *Session) buildChildSARekeyRequest(localSPI uint32, nonce []byte, tsi, t
 }
 
 func (s *Session) buildChildSARekeyPayloads(request childSARekeyRequest) []ikev2.Payload {
+	// RFC 7296 1.3.3: REKEY_SA carries the SPI the initiator expects on
+	// inbound ESP. Sending the peer's SPI gets CHILD_SA_NOT_FOUND (44).
 	s.childSAMu.RLock()
-	oldRemoteSPI := s.espRemoteSPI
+	oldInboundSPI := s.espLocalSPI
 	s.childSAMu.RUnlock()
 	proposals := buildESPProposalsForSession(s, request.localSPI)
 	if request.dh != nil {
@@ -240,7 +242,7 @@ func (s *Session) buildChildSARekeyPayloads(request childSARekeyRequest) []ikev2
 	return append(payloads,
 		&ikev2.EncryptedPayloadNotify{
 			ProtocolID: ikev2.ProtoESP,
-			NotifyType: ikev2.NotifyTypeRekeySA, SPI: spiBytes(oldRemoteSPI),
+			NotifyType: ikev2.NotifyTypeRekeySA, SPI: spiBytes(oldInboundSPI),
 		},
 		cloneTrafficSelectorPayload(request.tsi),
 		cloneTrafficSelectorPayload(request.tsr),

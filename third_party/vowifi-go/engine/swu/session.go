@@ -106,6 +106,8 @@ type Config struct {
 	VerifyFinalResponderAUTH  bool
 	EnableDeviceIdentitySpoof bool
 	DeviceIdentityIMEI        string
+	WithholdDeviceIdentity    bool // keep DEVICE_IDENTITY out of the first IKE_AUTH
+	KeepChildSAOnRekeyDecline bool // keep the CHILD_SA when its rekey gets NO_ADDITIONAL_SAS
 	IKEIdentityMode           string
 	AKAChallengeMode          string
 	AKAIdentityMode           string
@@ -289,30 +291,31 @@ type Session struct {
 	epdgCandidate *epdgCandidateAttempt
 
 	// --- IKE_AUTH state ---
-	stage                  ikeAuthStage
-	eapID                  byte // current EAP identifier
-	eapType                byte // negotiated EAP method (AKA / AKA')
-	eapKeys                eapaka.Keys
-	fastReauthCtx          *engineeap.FastReauthContext
-	ikeIdentity            string
-	eapIdentity            string
-	eapIdentitySet         bool
-	eapLastStep            string // last EAP step seen, reported with EAP-Failure
-	deviceIdentityAsked    bool   // ePDG requested DEVICE_IDENTITY (minimal IKE_AUTH)
-	eapTranscript          [][]byte
-	eapIdentityTranscript  [][]byte
-	eapResultIndicated     bool
-	eapResultConfirmed     bool
-	eapSuccessReceived     bool
-	authPayload            []byte // responder AUTH payload (for verification)
-	skf                    []byte // SKF (encrypted IKE_AUTH response) pending decrypt
-	responderAuthenticated bool
-	eapOnlyAuthentication  bool
-	eapOnlyRequested       bool
-	responderIDType        byte
-	responderID            []byte
-	ikeSAInitRequest       []byte
-	ikeSAInitResponse      []byte
+	stage                     ikeAuthStage
+	eapID                     byte // current EAP identifier
+	eapType                   byte // negotiated EAP method (AKA / AKA')
+	eapKeys                   eapaka.Keys
+	fastReauthCtx             *engineeap.FastReauthContext
+	ikeIdentity               string
+	eapIdentity               string
+	eapIdentitySet            bool
+	eapLastStep               string // last EAP step seen, reported with EAP-Failure
+	eapTranscript             [][]byte
+	eapIdentityTranscript     [][]byte
+	eapResultIndicated        bool
+	eapResultConfirmed        bool
+	eapSuccessReceived        bool
+	deviceIdentityRequested   bool // owned by the serial IKE_AUTH loop
+	deviceIdentityEAPVerified bool
+	authPayload               []byte // responder AUTH payload (for verification)
+	skf                       []byte // SKF (encrypted IKE_AUTH response) pending decrypt
+	responderAuthenticated    bool
+	eapOnlyAuthentication     bool
+	eapOnlyRequested          bool
+	responderIDType           byte
+	responderID               []byte
+	ikeSAInitRequest          []byte
+	ikeSAInitResponse         []byte
 
 	// --- data plane ---
 	innerEndpointMu   sync.RWMutex
@@ -633,8 +636,9 @@ func (s *Session) failSession(err error) {
 	s.mu.RLock()
 	wasEstablished := s.state == stateEstablished
 	s.mu.RUnlock()
-	if wasEstablished && !errors.Is(err, context.Canceled) {
-		logger.Warn("SWu established session failed", zap.Error(err))
+	if wasEstablished && s.Logger != nil && !errors.Is(err, context.Canceled) {
+		// OnSessionDown only reports "swu_session_down"; keep the cause.
+		s.Logger.Warn("SWu established session failed", zap.Error(err))
 	}
 	s.sendEstablishedDeletes()
 	s.setTerminalError(err)

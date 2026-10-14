@@ -123,7 +123,6 @@ func (s *Session) waitForIKEResponse(ctx context.Context, expected *ikev2.IKEPac
 			if !ok {
 				return nil, false, errors.New("swu: IKE transport closed")
 			}
-			s.markInboundActivity()
 			header, err := ikev2.DecodeHeader(raw)
 			if err != nil {
 				return nil, false, err

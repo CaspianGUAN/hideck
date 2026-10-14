@@ -1,0 +1,26 @@
+[
+  {
+    "stepTitle": "设备访问与安装说明",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "请先安装并启动飞牛 Docker 应用。本包在线拉取固定版本镜像，不包含离线镜像。HiDeck 使用 host 网络、特权容器及完整 /dev 挂载，可以访问宿主机硬件；仅在信任该应用时安装。请勿与另一套 HiDeck 同时控制同一个模组。"
+      },
+      {
+        "type": "tips",
+        "helpText": "安装过程不会切换通话模式、开启 ADB 或重启模组。首次登录使用 admin / admin 并立即修改密码。桌面入口可见性不代替 HiDeck 自身登录；请不要直接将管理端口暴露到互联网。双向网页通话需要受信任的 HTTPS，以及可达的 WebRTC UDP 通道。"
+      },
+      {
+        "type": "select",
+        "field": "wizard_hardware_access",
+        "label": "确认硬件访问权限",
+        "initValue": "no",
+        "options": [
+          {"label": "暂不授权", "value": "no"},
+          {"label": "已理解并允许以上设备访问", "value": "yes"}
+        ],
+        "rules": [{"pattern": "^yes$", "message": "需要明确确认后才能安装"}]
+      }
+    ]
+  }
+]

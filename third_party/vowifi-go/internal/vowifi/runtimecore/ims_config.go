@@ -46,6 +46,7 @@ func buildIMSConfig(input imsConfigInput) (*imscore.IMSConfig, error) {
 		prepared.Profile.MCC, prepared.Profile.MNC, prepared.Profile.IMSDomain,
 		prepared.Profile.UserAgent, input.result.LocalAddr, prepared.CarrierPlan,
 	)
+	value.ICCID = strings.TrimSpace(prepared.Profile.ICCID)
 	if err := imscore.ApplyResolvedIMSIdentityToConfig(&value, identity, prepared.Profile.MCC); err != nil {
 		return nil, fmt.Errorf("runtimecore: apply IMS identity: %w", err)
 	}

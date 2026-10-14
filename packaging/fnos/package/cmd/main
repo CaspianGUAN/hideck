@@ -1,0 +1,34 @@
+#!/bin/sh
+set -eu
+
+. "$(dirname "$0")/common"
+
+status() {
+  # Listing distinguishes an absent container from a Docker permission/daemon error.
+  container_id=$(bounded_docker container ls -a --filter 'name=^/hideck-fnos$' --format '{{.ID}}') || return 1
+  [ -n "$container_id" ] || return 3
+  format='{{index .Config.Labels "com.docker.compose.project"}}|{{index .Config.Labels "com.docker.compose.service"}}|{{.State.Status}}'
+  state=$(bounded_docker inspect --type container --format "$format" "$container_id") || return 1
+  case "$state" in
+    # fnOS status means running, not ready. Docker health remains a separate signal;
+    # waiting for its first scheduled probe here would reject normal cold starts.
+    'hideck-fnos|hideck|running') return 0 ;;
+    hideck-fnos\|hideck\|*) return 3 ;;
+    *) report_error '同名容器不属于此飞牛应用，请检查容器冲突。'; return 1 ;;
+  esac
+}
+
+case "${1:-}" in
+  start)
+    # fnOS starts the declared Docker project; only initialize our own files here.
+    preflight
+    "${TRIM_APPDEST:?fnOS application directory is required}/bin/initialize"
+    exec "$TRIM_APPDEST/bin/configure-entry" restore
+    ;;
+  stop)
+    # fnOS stops the declared Docker project. Do not stop other HiDeck deployments.
+    exit 0
+    ;;
+  status) status ;;
+  *) report_error '不支持的 HiDeck 生命周期操作。'; exit 1 ;;
+esac

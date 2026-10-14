@@ -60,6 +60,23 @@ func TestMuxRoutesByMode(t *testing.T) {
 	}
 }
 
+func TestMuxRetainsModemCallOwnerAfterModeSwitch(t *testing.T) {
+	ims, native, modem := &stubBackend{name: "ims"}, &stubBackend{name: "native"}, &stubBackend{name: "modem"}
+	selected := true
+	mux := &Mux{IMS: ims, Native: native, Modem: modem, IsModem: func(string) bool { return selected }}
+	got, err := mux.BeginCall(context.Background(), voicehost.BeginCallRequest{DeviceID: "d"})
+	if err != nil || got.CallID != "modem-d" {
+		t.Fatalf("%+v %v", got, err)
+	}
+	selected = false
+	if mux.pickCall("d", "modemvoice-owned") != modem {
+		t.Fatal("call followed new mode")
+	}
+	if mux.pick("d") != ims {
+		t.Fatal("new calls did not follow selected mode")
+	}
+}
+
 func TestMapQMIState(t *testing.T) {
 	state, event := mapQMIState(qmiCallConversation)
 	if state != "connected" || event != "CallAnswered" {

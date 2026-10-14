@@ -455,9 +455,8 @@ func BuildSubmitTPDUsWithOptions(to, text string, opts SubmitOptions) ([][]byte,
 	var lenList []int
 
 	for _, pdu := range tpdus {
-		// 修复短号码地址类型：库默认将所有号码设为 TonInternational (0x91)，
-		// 但运营商短号码（如 888、10086）应使用 TonUnknown (0x81)
-		if IsShortCode(normalizedTo) {
+		// 编码库默认使用国际地址类型；只有显式 + 前缀才代表国际格式。
+		if !strings.HasPrefix(normalizedTo, "+") {
 			da := pdu.DA
 			da.SetTypeOfNumber(tpdu.TonUnknown)
 			da.SetNumberingPlan(tpdu.NpISDN)

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
-	"github.com/iniwex5/vowifi-go/engine/logger"
 	"go.uber.org/zap"
 )
 
@@ -27,9 +26,11 @@ type rekeyTimerSpec struct {
 	target        **time.Timer
 	action        func() error
 	immediateFail func(error) bool
-	// declined reports a rejection that leaves the current SA usable; the
-	// timer stops instead of tearing the session down.
-	declined      func(error) bool
+	// declined keeps the current SA in service and asks again next interval.
+	declined func(error) bool
+	// refused reports a rejection that leaves the current SA usable once
+	// retries are exhausted; the timer stops instead of failing the session.
+	refused       func(error) bool
 	retryInterval time.Duration
 }
 
@@ -79,12 +80,28 @@ func (s *Session) startChildSARekeyTimer(interval time.Duration) {
 	s.startRekeyTimer(rekeyTimerSpec{
 		name: "CHILD_SA", interval: interval,
 		reset: reset, target: &s.childRekeyTimer, action: s.RekeyChildSA,
-		immediateFail: isChildSANotFoundError,
+		immediateFail: isChildSANotFoundError, declined: s.childRekeyDeclined(),
 		// Some ePDGs (T-Mobile US) refuse every UE-initiated CHILD_SA rekey
 		// with NO_PROPOSAL_CHOSEN, with or without PFS, while the SA stays
 		// valid. Keep it and leave rekeying to the ePDG.
-		declined: isNoProposalChosenError,
+		refused: isNoProposalChosenError,
 	})
+}
+
+// childRekeyDeclined treats NO_ADDITIONAL_SAS as a decline only where the
+// carrier preset opts in; elsewhere it stays a rekey failure.
+func (s *Session) childRekeyDeclined() func(error) bool {
+	if s.cfg != nil && s.cfg.KeepChildSAOnRekeyDecline {
+		return isNoAdditionalSAsError
+	}
+	return nil
+}
+
+// isNoAdditionalSAsError reports a peer that refuses a UE-initiated CHILD_SA
+// rekey. RFC 7296 2.8 keeps the old SA valid after a failed rekey.
+func isNoAdditionalSAsError(err error) bool {
+	var rejection *createChildSARejectError
+	return errors.As(err, &rejection) && rejection.NotifyType == ikev2.NO_ADDITIONAL_SAS
 }
 
 func isChildSANotFoundError(err error) bool {
@@ -130,9 +147,19 @@ func (s *Session) runRekeyTimer(timer *time.Timer, spec rekeyTimerSpec) {
 				}
 				continue
 			}
+			if spec.declined != nil && spec.declined(err) {
+				s.Logger.Warn("peer declined "+spec.name+" rekey; keeping current SA", zap.Error(err))
+				failures = 0
+				if !s.resetRekeyTimer(timer, rekeyDelay(spec.interval)) {
+					return
+				}
+				continue
+			}
 			failures++
-			if failures >= rekeyMaxFailures && spec.declined != nil && spec.declined(err) {
-				logger.Warn("ePDG declined UE-initiated rekey; keeping the current SA and leaving rekey to the ePDG",
+			s.Logger.Warn(spec.name+" rekey attempt failed", zap.Int("attempt", failures),
+				zap.Int("max_attempts", rekeyMaxFailures), zap.Error(err))
+			if failures >= rekeyMaxFailures && spec.refused != nil && spec.refused(err) {
+				s.Logger.Warn("ePDG declined UE-initiated rekey; keeping the current SA and leaving rekey to the ePDG",
 					zap.String("sa", spec.name), zap.Error(err))
 				return
 			}

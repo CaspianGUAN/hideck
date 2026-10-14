@@ -81,6 +81,12 @@ func (observer *instanceObserver) applyLatestSMSReadiness(state *State) {
 	if ok {
 		applySMSReadiness(state, readiness)
 	}
+	// Registration can be published before its new readiness snapshot. Do not
+	// turn a pre-registration snapshot into an observed SMS outage.
+	if !ok || !readiness.Registered {
+		state.SMSRXPending = true
+		state.SMSReadyReason = "IMS SMS readiness has not been reported"
+	}
 }
 
 func (observer *instanceObserver) applyEventHandles(
@@ -131,6 +137,7 @@ func (observer *instanceObserver) applyEvent(
 	case "sms_ready":
 		state.Phase = "sms_ready"
 		state.SMSReady = true
+		state.SMSRXPending = false
 		state.SMSMOReady = true
 		state.SMSHealthReady = true
 		clearRecoveredFailure(state)
@@ -182,6 +189,7 @@ func markIMSUnavailable(state *State, status string) {
 	state.IMSState = status
 	state.IMSReady = false
 	state.SMSReady = false
+	state.SMSRXPending = false
 	state.SMSMOReady = false
 	state.SMSHealthReady = false
 	state.SMSReadyReason = ""

@@ -134,8 +134,8 @@ func TestParseRecoveredRegisterResponseFields(t *testing.T) {
 		"Expires": "3600", "Contact": "<sip:a@example>;expires=120",
 		"Retry-After": "9", "Min-Expires": "600",
 	}}
-	if got := parseRegisterExpiresFromResponse(response, 10); got != 3600 {
-		t.Fatalf("parseRegisterExpiresFromResponse = %d", got)
+	if got, err := registrationExpires(response, "<sip:a@example>", 10*time.Second); err != nil || got != 120*time.Second {
+		t.Fatalf("registrationExpires = %s, %v", got, err)
 	}
 	retryAfter, retryAfterSet, minExpires := parseRegisterRetryHintsFromResponse(response)
 	if retryAfter != 9*time.Second || !retryAfterSet || minExpires != 600 {
@@ -899,7 +899,7 @@ func TestRegisterKeepsItsBindingWhenStaleContactsAreAdvertised(t *testing.T) {
 	service.transport.SetSendFn(func(request string) error {
 		requests <- request
 		service.transport.DeliverResponse(registerResponseForRequest(request, 200, map[string]string{
-			"Contact": `<sip:contact-1@new.example>, <sip:stale@old.example>`,
+			"Contact": sipHeaderValue(request, "Contact") + `, <sip:stale@old.example>`,
 		}))
 		return nil
 	})

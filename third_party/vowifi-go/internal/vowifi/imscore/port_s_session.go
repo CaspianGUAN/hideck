@@ -122,6 +122,7 @@ func (s *Service) recordPortSClosed(conn net.Conn, err error, now time.Time) boo
 	if current {
 		if kind != portSCloseLocal {
 			s.udpDownlinkProven.Store(false)
+			s.invalidateSMSReceptionLocked()
 		}
 		s.portSSession.closedAt = now
 		s.portSSession.lastCloseKind = kind

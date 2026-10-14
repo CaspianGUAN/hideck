@@ -1,0 +1,24 @@
+[
+  {
+    "stepTitle": "桌面入口",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "只修改飞牛桌面打开 HiDeck 的协议和端口，地址仍使用访问飞牛的主机名/IP。请先配置好 HiDeck 或反向代理的 HTTPS 并验证证书受信任，再选择 https 和对应端口（内置默认 7576）。这里不会开启 HTTPS、申请证书或改变媒体端口。重新选择两项后保存；重启和升级保留此选择。"
+      },
+      {
+        "type": "select",
+        "field": "wizard_entry_protocol",
+        "label": "入口协议",
+        "options": [{"label": "HTTP", "value": "http"}, {"label": "HTTPS", "value": "https"}],
+        "rules": [{"required": true, "message": "请选择入口协议"}]
+      },
+      {
+        "type": "text",
+        "field": "wizard_entry_port",
+        "label": "入口端口",
+        "rules": [{"required": true, "message": "请填写入口端口"}, {"pattern": "^[1-9][0-9]{0,4}$", "message": "请填写 1 到 65535 的端口"}]
+      }
+    ]
+  }
+]

@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/yibaiba/hideck/internal/outbound"
+
 	"github.com/spf13/viper"
 )
 
@@ -106,15 +108,17 @@ func ResolveIPFamily(in string) (enableV4 bool, enableV6 bool, err error) {
 }
 
 type Config struct {
-	Server   ServerConfig   `mapstructure:"server"`
-	System   SystemConfig   `mapstructure:"system"`
-	Devices  []DeviceConfig `mapstructure:"devices"`
-	Telegram TelegramConfig `mapstructure:"telegram"`
-	Feishu   FeishuConfig   `mapstructure:"feishu"`
-	QQ       QQConfig       `mapstructure:"qq"`
-	Weixin   WeixinConfig   `mapstructure:"weixin"`
-	WeComBot WeComBotConfig `mapstructure:"wecom_bot"`
-	Webhook  WebhookConfig  `mapstructure:"webhook"`
+	ModemVoice     ModemVoiceConfig `mapstructure:"modem_voice"`
+	OutboundLimits outbound.Config  `mapstructure:"outbound_limits"`
+	Server         ServerConfig     `mapstructure:"server"`
+	System         SystemConfig     `mapstructure:"system"`
+	Devices        []DeviceConfig   `mapstructure:"devices"`
+	Telegram       TelegramConfig   `mapstructure:"telegram"`
+	Feishu         FeishuConfig     `mapstructure:"feishu"`
+	QQ             QQConfig         `mapstructure:"qq"`
+	Weixin         WeixinConfig     `mapstructure:"weixin"`
+	WeComBot       WeComBotConfig   `mapstructure:"wecom_bot"`
+	Webhook        WebhookConfig    `mapstructure:"webhook"`
 
 	Bark     BarkConfig      `mapstructure:"bark"`
 	Email    EmailConfig     `mapstructure:"email"`
@@ -126,6 +130,11 @@ type Config struct {
 	SIP      SIPClientConfig `mapstructure:"sip_client"`
 	// SIPClients 每张卡一条 SIP 线路（各自 device_id、local_port），与 sip_client 可并存。
 	SIPClients []SIPClientConfig `mapstructure:"sip_clients"`
+
+	// NotificationDeviceFilters limits SMS and call notifications per channel
+	// to the listed device IDs. A channel without an entry gets every device.
+	// Notifications without a device, such as IP changes, go to every channel.
+	NotificationDeviceFilters map[string][]string `mapstructure:"notification_device_filters"`
 }
 
 // SIPClientConfig registers HiDeck as a SIP extension on a PBX (for example
@@ -189,13 +198,14 @@ type ServerConfig struct {
 	// EnableEVS offers EVS on calls. Only EVS decoding is native; uplink is
 	// sent in EVS AMR-WB IO mode, which some networks and handsets do not
 	// play, leaving the far end silent. Off by default so AMR-WB is used.
-	EnableEVS            bool     `mapstructure:"enable_evs"`
-	TLSCertFile          string   `mapstructure:"tls_cert_file"`
-	TLSKeyFile           string   `mapstructure:"tls_key_file"`
-	TLSDataDir           string   `mapstructure:"tls_data_dir"`
-	ICEServers           []string `mapstructure:"ice_servers"`
-	Debug                bool     `mapstructure:"debug"`
-	SMSRateLimitDisabled bool     `mapstructure:"sms_rate_limit_disabled"`
+	EnableEVS   bool     `mapstructure:"enable_evs"`
+	TLSCertFile string   `mapstructure:"tls_cert_file"`
+	TLSKeyFile  string   `mapstructure:"tls_key_file"`
+	TLSDataDir  string   `mapstructure:"tls_data_dir"`
+	ICEServers  []string `mapstructure:"ice_servers"`
+	Debug       bool     `mapstructure:"debug"`
+	// Deprecated: startup warns; outbound_limits now controls per-SIM quotas.
+	SMSRateLimitDisabled bool `mapstructure:"sms_rate_limit_disabled"`
 	// RecordingRetentionDays deletes call recordings and PCAPs older than this
 	// many days and clears their names from the call records. 0 keeps them.
 	RecordingRetentionDays int `mapstructure:"recording_retention_days"`
@@ -364,6 +374,8 @@ type NotificationConfigs struct {
 	Email    EmailConfig
 	Pushplus PushplusConfig
 	WeCom    WeComConfig
+
+	DeviceFilters map[string][]string
 }
 
 func Load(path string) (*Config, error) {

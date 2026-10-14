@@ -116,8 +116,9 @@ func (s *Session) deleteOldChildSA(remoteSPI, localSPI uint32) error {
 	if remoteSPI == 0 || localSPI == 0 {
 		return errors.New("swu: old CHILD_SA SPIs must be non-zero")
 	}
+	// RFC 7296 1.4.1: a Delete lists our inbound SPI; the reply lists the peer's.
 	response, err := s.sendEncryptedWithRetry([]ikev2.Payload{&ikev2.EncryptedPayloadDelete{
-		ProtocolID: ikev2.ProtoESP, SPISize: 4, NumSPIs: 1, SPIs: spiBytes(remoteSPI),
+		ProtocolID: ikev2.ProtoESP, SPISize: 4, NumSPIs: 1, SPIs: spiBytes(localSPI),
 	}}, ikev2.INFORMATIONAL)
 	if err != nil {
 		return err
@@ -130,7 +131,7 @@ func (s *Session) deleteOldChildSA(remoteSPI, localSPI uint32) error {
 	if err != nil {
 		return err
 	}
-	return validateChildSADeleteResponse(payloads, localSPI)
+	return validateChildSADeleteResponse(payloads, remoteSPI)
 }
 
 func validateChildSADeleteResponse(payloads []ikev2.Payload, expectedSPI uint32) error {

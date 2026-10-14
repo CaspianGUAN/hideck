@@ -273,6 +273,12 @@ deploy() {
   fi
   run_compose up -d --remove-orphans
   run_compose ps
+  printf '\n模组直拨：镜像包含 ADB、ALSA 和内嵌语音资源；宿主机仍需 snd_usb_audio 驱动。\n请保留 Compose 的 privileged 和 /dev:/dev，USB 重枚举后才能访问新设备。\n'
+  if [ ! -d /sys/bus/usb/drivers/snd-usb-audio ]; then
+    if ! command -v modinfo >/dev/null 2>&1 || ! modinfo snd_usb_audio >/dev/null 2>&1; then
+      printf '尚未确认宿主机 USB 音频驱动可用；请在 Docker 宿主机检查，不要在容器内安装宿主机内核驱动。\n' >&2
+    fi
+  fi
 }
 
 initialize_directories

@@ -1,0 +1,99 @@
+name: modem-voice-ci
+
+on:
+  pull_request:
+    paths:
+      - 'internal/modemvoice/**'
+      - 'internal/modem/**'
+      - 'internal/phone/**'
+      - 'pkg/g711/**'
+      - 'cmd/modem-voice-probe/**'
+      - 'Dockerfile*'
+      - 'deploy-binary.sh'
+      - 'deploy.sh'
+      - 'docker-compose.yml'
+      - 'packaging/openwrt/**'
+      - 'packaging/tests/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/modem-voice-ci.yml'
+      - '.github/workflows/openwrt-packages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Unit and concurrency checks
+        run: timeout 60s go test -race -timeout 60s ./internal/modemvoice/... ./internal/modem ./internal/phone ./internal/volte ./cmd/modem-voice-probe ./pkg/g711
+      - name: Vet
+        run: timeout 60s go vet ./internal/modemvoice/... ./cmd/modem-voice-probe ./pkg/g711
+      - name: Deployment dependency contracts
+        run: |
+          sh -n deploy-binary.sh
+          sh -n deploy.sh
+          for script in packaging/openwrt/*.sh; do sh -n "$script"; done
+          timeout 60s python3 -m unittest discover -s packaging/tests -v
+
+  compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+          - os: linux
+            arch: arm64
+          - os: linux
+            arch: arm
+          - os: windows
+            arch: amd64
+          - os: darwin
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Cross-compile optional voice packages
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          GOARM: '7'
+          CGO_ENABLED: '0'
+        run: |
+          timeout 60s go build ./internal/modemvoice/... ./pkg/g711
+          for package in audio media qdc507; do
+            timeout 60s go test -c -o "$RUNNER_TEMP/$package.test" "./internal/modemvoice/$package"
+          done
+
+  runtime-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        dockerfile: [Dockerfile.runtime, Dockerfile.release]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          target: runtime-base
+          platforms: linux/amd64,linux/arm64
+          push: false
+          cache-from: type=gha,scope=modem-voice-${{ matrix.dockerfile }}
+          cache-to: type=gha,mode=max,scope=modem-voice-${{ matrix.dockerfile }}

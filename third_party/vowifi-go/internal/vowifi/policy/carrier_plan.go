@@ -42,6 +42,7 @@ func CarrierPlanFromEffectiveConfig(config EffectiveCarrierConfig) CarrierPlan {
 			DPDKeepaliveIntervalSeconds: config.DPDKeepaliveIntervalSeconds,
 			ReauthIntervalSeconds:       config.ReauthIntervalSeconds,
 			IKERekeyIntervalSeconds:     config.IKERekeyIntervalSeconds,
+			KeepChildSAOnRekeyDecline:   config.KeepChildSAOnRekeyDecline,
 			AKAPrimePreferred:           config.AKAPrimePreferred,
 			IKEAuthMinimal:              config.IKEAuthMinimal,
 			OmitIKEFragmentNotifies:     config.OmitIKEFragmentNotifies,
@@ -59,7 +60,7 @@ func CarrierPlanFromEffectiveConfig(config EffectiveCarrierConfig) CarrierPlan {
 		SMS: SMSPlan{RoutingMethod: config.SMSRoutingMethod, RoutingGW: config.SMSRoutingGW, ForceSMSCAuth: config.ForceSMSCAuth},
 		Device: DeviceIdentityPlan{
 			IdentityIMEI: config.DeviceIdentityIMEI, IdentityEnabled: config.DeviceIdentityEnabled,
-			Model: config.DeviceModel,
+			Withhold: config.WithholdDeviceIdentity, Model: config.DeviceModel,
 		},
 	}
 }
@@ -90,6 +91,7 @@ func EffectiveCarrierConfigFromCarrierPlan(plan CarrierPlan) EffectiveCarrierCon
 		DPDKeepaliveIntervalSeconds: plan.IKE.DPDKeepaliveIntervalSeconds,
 		ReauthIntervalSeconds:       plan.IKE.ReauthIntervalSeconds,
 		IKERekeyIntervalSeconds:     plan.IKE.IKERekeyIntervalSeconds,
+		KeepChildSAOnRekeyDecline:   plan.IKE.KeepChildSAOnRekeyDecline,
 		AKAPrimePreferred:           plan.IKE.AKAPrimePreferred,
 		IKEAuthMinimal:              plan.IKE.IKEAuthMinimal,
 		OmitIKEFragmentNotifies:     plan.IKE.OmitIKEFragmentNotifies,
@@ -104,6 +106,7 @@ func EffectiveCarrierConfigFromCarrierPlan(plan CarrierPlan) EffectiveCarrierCon
 		SMSRoutingMethod:              plan.SMS.RoutingMethod, SMSRoutingGW: plan.SMS.RoutingGW,
 		ForceSMSCAuth: plan.SMS.ForceSMSCAuth, DeviceIdentityIMEI: plan.Device.IdentityIMEI,
 		DeviceIdentityEnabled: plan.Device.IdentityEnabled, DeviceModel: plan.Device.Model,
+		WithholdDeviceIdentity: plan.Device.Withhold,
 	}
 	syncCompatibilityProjection(&config)
 	return config

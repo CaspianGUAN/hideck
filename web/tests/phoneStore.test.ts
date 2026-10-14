@@ -35,6 +35,19 @@ test('normalizes broadcast ownership against the tab media session', () => {
   assert.equal(normalizeCallOwnership(call('', { read_only: false }), 'ours').read_only, false)
 })
 
+test('failed dial keeps the broadcast call visible and requires takeover after media release', () => {
+  setActivePinia(createPinia())
+  const store = usePhoneStore()
+  store.mediaId = 'ours'
+  store.lease = 'lease'
+  store.handleEvent(event(1, call('ours', { status: 'calling' })))
+  assert.equal(store.currentCall?.read_only, false)
+  store.releaseMedia()
+  assert.equal(store.calls.length, 1)
+  assert.equal(store.currentCall?.read_only, true)
+  assert.equal(store.lease, '')
+})
+
 test('store ignores replayed events and never grants another media session control', () => {
   setActivePinia(createPinia())
   const store = usePhoneStore()

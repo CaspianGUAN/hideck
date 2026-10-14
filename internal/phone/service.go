@@ -34,7 +34,8 @@ type Service struct {
 	calls               map[string]*activeCall
 	deviceCalls         map[string]string
 	mediaCalls          map[string]string
-	pendingMediaDrops   map[string]struct{}
+	mediaReservations   map[string]*mediaReservation
+	pendingMediaDrops   map[string]*pendingMediaDrop
 	pendingEvents       map[string][]voicehost.CallEvent
 	terminalSeen        map[string]struct{}
 	closeOnce           sync.Once
@@ -53,7 +54,8 @@ func NewService(options ServiceOptions) (*Service, error) {
 		resolveICCID: options.ResolveICCID, recoveryGrace: options.RecoveryGrace,
 		ctx: ctx, cancel: cancel, calls: make(map[string]*activeCall),
 		deviceCalls: make(map[string]string), mediaCalls: make(map[string]string),
-		pendingMediaDrops: make(map[string]struct{}),
+		mediaReservations: make(map[string]*mediaReservation),
+		pendingMediaDrops: make(map[string]*pendingMediaDrop),
 		pendingEvents:     make(map[string][]voicehost.CallEvent), terminalSeen: make(map[string]struct{}),
 		deviceWaiting: make(map[string]string),
 	}
@@ -99,6 +101,32 @@ func (s *Service) CreateMedia(ctx context.Context, owner, offer string) (MediaAn
 		return MediaAnswer{}, errors.New("phone: WebRTC SDP offer is required")
 	}
 	return s.media.Create(ctx, owner, offer)
+}
+
+func (s *Service) CancelMedia(owner, mediaID, lease string) error {
+	mediaID = strings.TrimSpace(mediaID)
+	s.mu.Lock()
+	media := s.media.Get(mediaID)
+	if media == nil {
+		s.mu.Unlock()
+		return errors.New("phone: media session not found")
+	}
+	if !media.Matches(owner, strings.TrimSpace(lease)) {
+		s.mu.Unlock()
+		return errors.New("phone: invalid media control lease")
+	}
+	if s.mediaCalls[mediaID] != "" || s.mediaReservations[mediaID] != nil {
+		s.mu.Unlock()
+		return errors.New("phone: media session already has an active call operation")
+	}
+	media, err := s.media.detachOwned(mediaID, owner, lease)
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	s.clearPendingMediaDropLocked(mediaID)
+	s.mu.Unlock()
+	return media.Close()
 }
 
 func (s *Service) Active(lease string) []CallView {
@@ -151,6 +179,7 @@ func (s *Service) close(ctx context.Context) error {
 	if s.unsubscribeEvents != nil {
 		s.unsubscribeEvents()
 	}
+	s.stopPendingMediaDropTimers()
 	s.cancel()
 	return errors.Join(result, s.media.Close())
 }

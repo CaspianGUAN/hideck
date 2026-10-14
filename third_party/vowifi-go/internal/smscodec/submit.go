@@ -74,7 +74,7 @@ func BuildSubmitTPDUsWithOptions(to, text string, opts SubmitOptions) ([][]byte,
 	bytesList := make([][]byte, 0, len(tpdus))
 	lenList := make([]int, 0, len(tpdus))
 	for _, pdu := range tpdus {
-		if IsShortCode(normalizedTo) {
+		if !strings.HasPrefix(normalizedTo, "+") {
 			da := pdu.DA
 			da.SetTypeOfNumber(tpdu.TonUnknown)
 			da.SetNumberingPlan(tpdu.NpISDN)

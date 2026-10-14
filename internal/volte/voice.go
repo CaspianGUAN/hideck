@@ -50,6 +50,7 @@ type voiceSession struct {
 type nativeCall struct {
 	ID        string
 	QMI       uint8
+	Mode      qmi.VoiceCallMode
 	Direction string
 	Peer      string
 	State     string
@@ -86,7 +87,9 @@ func (c *Controller) attachVoice(deviceID string) {
 	c.mu.Unlock()
 	if first {
 		_ = c.host.OnVoiceStatus(deviceID, func(info *qmi.VoiceAllCallInfo) {
-			if !c.generationLive(deviceID, gen) {
+			s.events.Lock()
+			defer s.events.Unlock()
+			if !c.sessionGenerationLive(deviceID, s, gen) {
 				return
 			}
 			c.handleVoiceInfo(deviceID, vs, info)
@@ -102,21 +105,28 @@ func (c *Controller) ReconcileCalls(ctx context.Context, deviceID string) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	info, err := c.host.VOICEGetAllCallInfo(ctx, deviceID)
-	if err != nil {
-		return
-	}
 	c.mu.Lock()
 	s := c.sess[deviceID]
 	var vs *voiceSession
+	var gen uint64
 	if s != nil {
 		if s.voice == nil {
 			s.voice = newVoiceSession()
 		}
 		vs = s.voice
+		gen = s.gen
 	}
 	c.mu.Unlock()
 	if vs == nil {
+		return
+	}
+	info, err := c.host.VOICEGetAllCallInfo(ctx, deviceID)
+	if err != nil {
+		return
+	}
+	s.events.Lock()
+	defer s.events.Unlock()
+	if !c.sessionGenerationLive(deviceID, s, gen) {
 		return
 	}
 	c.handleVoiceInfo(deviceID, vs, info)
@@ -178,6 +188,19 @@ func (c *Controller) ensureLocked(deviceID string) *session {
 }
 
 func (c *Controller) BeginCall(ctx context.Context, request voicehost.BeginCallRequest) (voicehost.CallSnapshot, error) {
+	if c == nil {
+		return voicehost.CallSnapshot{}, errors.New("volte: controller is not configured")
+	}
+	var snapshot voicehost.CallSnapshot
+	err := c.withDevice(strings.TrimSpace(request.DeviceID), func() error {
+		var err error
+		snapshot, err = c.beginCall(ctx, request)
+		return err
+	})
+	return snapshot, err
+}
+
+func (c *Controller) beginCall(ctx context.Context, request voicehost.BeginCallRequest) (voicehost.CallSnapshot, error) {
 	deviceID := strings.TrimSpace(request.DeviceID)
 	if c == nil || c.host == nil {
 		return voicehost.CallSnapshot{}, errors.New("volte: controller is not configured")
@@ -195,9 +218,11 @@ func (c *Controller) BeginCall(ctx context.Context, request voicehost.BeginCallR
 	}
 	now := time.Now()
 	id := ""
+	mode := qmi.VoiceCallModeNoService
 	if vs := c.sessionVoice(deviceID); vs != nil {
 		if prev, ok := vs.getByQMI(qmiID); ok && stateRank(prev.State) != rankTerminal {
 			id = prev.ID
+			mode = prev.Mode
 			if !prev.Start.IsZero() {
 				now = prev.Start
 			}
@@ -214,7 +239,7 @@ func (c *Controller) BeginCall(ctx context.Context, request voicehost.BeginCallR
 		sdp = media.sdp
 		c.media.put(id, media)
 	}
-	nc := nativeCall{ID: id, QMI: qmiID, Direction: "outbound", Peer: request.Callee, State: "calling", Start: now, ClientSDP: sdp}
+	nc := nativeCall{ID: id, QMI: qmiID, Mode: mode, Direction: "outbound", Peer: request.Callee, State: "calling", Start: now, ClientSDP: sdp}
 	c.storeCall(deviceID, nc)
 	c.mu.Lock()
 	vs := (*voiceSession)(nil)
@@ -392,14 +417,6 @@ func (c *Controller) SwitchCall(string, string) error {
 	return errors.New("volte: native call switch is not supported")
 }
 
-func (c *Controller) SendCallDTMF(deviceID, id, digit string) error {
-	call, ok := c.lookup(deviceID, id)
-	if !ok {
-		return fmt.Errorf("volte: call %s not found", id)
-	}
-	return c.host.VOICEBurstDTMF(context.Background(), deviceID, call.QMI, digit)
-}
-
 func (c *Controller) StartCallCapture(deviceID, id, basePath string) error {
 	if c.media.get(id) != nil {
 		return nil
@@ -503,7 +520,7 @@ func (c *Controller) handleVoiceInfo(deviceID string, vs *voiceSession, info *qm
 			}
 		}
 		next := nativeCall{
-			ID: id, QMI: item.ID, Direction: dir, Peer: peer, State: state,
+			ID: id, QMI: item.ID, Mode: item.Mode, Direction: dir, Peer: peer, State: state,
 			Start: startedAt(prev, now), ClientSDP: prev.ClientSDP, Reason: reason, Codec: codec,
 			Held: prev.Held,
 		}

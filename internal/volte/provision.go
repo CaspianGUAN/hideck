@@ -176,6 +176,17 @@ func (p *Provisioner) Restore(ctx context.Context, deviceID string) (Result, err
 		return res, p.fail(res, StageRestoreIdentity, "load snapshot", err)
 	}
 	res.SnapshotPath = path
+	if host, ok := p.at.(interface{ MBNManaged(string) (bool, error) }); ok {
+		managed, err := host.MBNManaged(deviceID)
+		if err != nil {
+			return res, err
+		}
+		if managed {
+			snap.Original.MBNName = current.MBNName
+			snap.Original.MBNAutoSel = current.MBNAutoSel
+			snap.Original.MBNIndex = current.MBNIndex
+		}
+	}
 	res.Original = snap.Original
 	res.Target = snap.Original
 	if snap.IMEI != imei {
@@ -217,6 +228,18 @@ func (s Snapshot) withTarget(target VoiceSettings) Snapshot {
 func (p *Provisioner) capture(ctx context.Context, deviceID string, desired Desired) (Result, Snapshot, error) {
 	_ = ctx
 	res := Result{DeviceID: deviceID, Stage: StageIdentity, Restored: false}
+	if host, ok := p.at.(interface{ MBNManaged(string) (bool, error) }); ok {
+		managed, err := host.MBNManaged(deviceID)
+		if err != nil {
+			return res, Snapshot{}, err
+		}
+		if managed {
+			desired.MCC = ""
+			desired.MNC = ""
+			desired.MBNSelect = nil
+			desired.MBNAutoSel = nil
+		}
+	}
 	current, imei, entries, err := p.readSettings(deviceID)
 	if err != nil {
 		return res, Snapshot{}, p.fail(res, StageIdentity, "read module identity", err)

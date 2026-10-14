@@ -143,7 +143,7 @@ function formatCountryOption(country: UpstreamProxyCountry): string {
 
       <p class="proxy-rule-notice">
         <Info24Regular aria-hidden="true" />
-        <span>规则按 SIM 归属 MCC 解析国家；没有配置规则的国家默认直连。规则变更后需要重启 VoWiFi 生效。</span>
+        <span>规则按 SIM 归属 MCC 选择代理，不代表代理出口国家，也不要求两者同国。实际出口见代理列表；没有规则的国家默认直连，规则变更后需重启 VoWiFi 生效。</span>
       </p>
     </div>
   </el-drawer>

@@ -200,8 +200,12 @@ func TestManagerStartRuntimeStopsStaleStartedInstance(t *testing.T) {
 	manager := NewManager()
 	deviceID := "dev-stale"
 	claim := manager.BeginStart(deviceID)
-	manager.InvalidateRuntime(deviceID, "test")
 	manager.SetRuntimeStartForTest(func(ctx context.Context, req runtimehost.StartRequest) (*runtimehost.Instance, error) {
+		manager.InvalidateRuntime(deviceID, "test")
+		replacement := manager.BeginStart(deviceID)
+		manager.RecordStartupStateForEpoch(deviceID, replacement.Epoch, runtimehost.State{
+			DeviceID: deviceID, Phase: runtimehost.PhaseSIMReady, UpdatedAt: time.Now(),
+		})
 		if req.ShouldRun() {
 			t.Fatal("StartRequest.ShouldRun() = true after invalidation, want false")
 		}
@@ -228,5 +232,8 @@ func TestManagerStartRuntimeStopsStaleStartedInstance(t *testing.T) {
 	}
 	if manager.Active(deviceID) {
 		t.Fatal("stale started instance should not become active")
+	}
+	if state, _ := manager.State(deviceID); state.Phase != runtimehost.PhaseSIMReady || !manager.Starting(deviceID) {
+		t.Fatalf("stale completion cleared replacement startup: %+v", state)
 	}
 }

@@ -36,6 +36,9 @@ type EventSMSSent struct {
 	Content    string
 	Time       time.Time
 	TotalParts int
+	MessageID  string
+	ICCID      string
+	IMSI       string
 }
 
 // EventSMSSendAccepted is published when an SMS send is accepted.

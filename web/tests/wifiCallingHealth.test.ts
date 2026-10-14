@@ -65,7 +65,7 @@ test('does not report a percentage before the first IMS registration', () => {
   const checking = health({ state: 'checking', measured: false, availability: 0 })
 
   assert.equal(formatHealthAvailability(checking), '--')
-  assert.equal(wifiCallingHealthDetail(checking), '首次 IMS 注册成功后开始统计可用率')
+  assert.equal(wifiCallingHealthDetail(checking), 'IMS 注册成功且接收状态可判定后开始统计可用率')
 })
 
 test('shows an explicit startup failure before the first IMS registration', () => {
@@ -81,4 +81,12 @@ test('shows an explicit startup failure before the first IMS registration', () =
   assert.equal(wifiCallingHealthEventLabel({
     kind: 'failed', state: 'unavailable', at: '2026-09-04T10:00:00Z'
   }), '启动失败')
+})
+
+test('unverified reception is neither downtime nor verified availability', () => {
+  const pending = health({ state: 'pending', measured: false, availability: 0 })
+  assert.equal(wifiCallingHealthLabel(pending), '短信接收待验证')
+  assert.equal(wifiCallingHealthTone(pending.state), 'neutral')
+  assert.equal(formatHealthAvailability(pending), '--')
+  assert.match(wifiCallingHealthDetail(pending), /不计为正常或中断/)
 })

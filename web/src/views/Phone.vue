@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Backspace24Regular,
@@ -21,17 +21,23 @@ import PhoneCallHistory from '../components/PhoneCallHistory.vue'
 import PhoneContactsPanel from '../components/PhoneContactsPanel.vue'
 import PhoneDialPad from '../components/PhoneDialPad.vue'
 import type { PhoneCall, PhoneDevice } from '../services/phone'
+import { phoneService } from '../services/phone'
 import { devicesService } from '../services/devices'
 import { usePhoneStore } from '../stores/phone'
 import { usePhoneIdentity } from '../composables/usePhoneIdentity'
+import { usePhoneDeviceSelection } from '../composables/usePhoneDeviceSelection'
 import { phoneContactsService } from '../services/phone-contacts'
-import { formatCallDuration, phoneCallStatusLabel, phoneErrorMessage } from '../utils/phone'
-
-const CALLEE_PATTERN = /^\+?[0-9]{1,32}$/
+import { dialNumberError, formatCallDuration, phoneCallStatusLabel, phoneErrorMessage } from '../utils/phone'
+import { confirmPhoneModeChange, phoneModeDisabledReason } from '../utils/phoneModeSwitch'
 
 const phone = usePhoneStore()
 const identities = usePhoneIdentity()
-const selectedDevice = ref('')
+const { selectedDevice, rememberDevice } = usePhoneDeviceSelection({
+  devices: () => phone.devices,
+  isReady: isDeviceReady,
+  storage: () => window.localStorage,
+  onStorageError: () => ElMessage.warning('无法保存或读取拨号设备，请检查浏览器存储权限')
+})
 const callee = ref('')
 const action = ref('')
 const keypadVisible = ref(false)
@@ -40,17 +46,18 @@ const lastDTMF = ref('')
 const call = computed(() => phone.currentCall)
 const callEnding = computed(() => call.value ? phone.isCallEnding(call.value.call_id) : false)
 const connected = computed(() => call.value?.status === 'connected')
+const modemCall = computed(() => call.value?.call_id.startsWith('modemvoice-') === true)
 const incoming = computed(() => call.value?.direction === 'inbound'
   && call.value.status === 'ringing'
   && !call.value.media_id)
 const waitingCall = computed(() => phone.calls.find((item) =>
   item.status === 'waiting' && item.call_id !== call.value?.call_id))
 const selected = computed(() => phone.devices.find((device) => device.id === selectedDevice.value))
-const canPlaceCall = computed(() => CALLEE_PATTERN.test(callee.value)
+const calleeError = computed(() => dialNumberError(callee.value, selected.value?.phone_region))
+const canPlaceCall = computed(() => !!callee.value && !calleeError.value
   && !!selected.value
   && (isDeviceReady(selected.value) || selected.value.phone_mode === 'cellular' || selected.value.phone_mode === 'volte')
   && !isDeviceBusy(selected.value))
-watch(() => phone.devices, (devices) => selectFirstAvailableDevice(devices), { immediate: true })
 watch(call, (current) => {
   if (!current || current.status !== 'connected') keypadVisible.value = false
   if (current?.peer) void identities.resolve(current.peer, current.device_id)
@@ -62,17 +69,28 @@ watch(() => phone.history.map((item) => `${item.device_id}\u0000${item.peer}`).j
   }
 }, { immediate: true })
 watch([callee, selectedDevice], ([value, deviceId]) => {
-  if (CALLEE_PATTERN.test(value)) void identities.resolve(value, deviceId)
+  if (value && !dialNumberError(value, selected.value?.phone_region)) void identities.resolve(value, deviceId)
 })
 
 onMounted(async () => {
   if (!phone.initialized) await phone.initialize()
 })
 
-function selectFirstAvailableDevice(devices: PhoneDevice[]) {
-  if (devices.some((device) => device.id === selectedDevice.value)) return
-  selectedDevice.value = devices.find((device) => isDeviceReady(device))?.id || devices[0]?.id || ''
-}
+const statusAbort = new AbortController()
+let statusPending = false
+let modeRevision = 0
+const statusTimer = window.setInterval(async () => {
+  if (selected.value?.phone_mode !== 'modem_voice' || statusPending || modePending.value) return
+  statusPending = true
+  const revision = modeRevision
+  try {
+    const devices = await phoneService.devices(statusAbort.signal)
+    if (!statusAbort.signal.aborted && !modePending.value && revision === modeRevision) phone.devices = devices
+  } catch (error) {
+    if (!statusAbort.signal.aborted) phone.error = phoneErrorMessage(error, '模组直拨状态刷新失败')
+  } finally { statusPending = false }
+}, 2_000)
+onUnmounted(() => { window.clearInterval(statusTimer); statusAbort.abort() })
 
 function isDeviceReady(device: PhoneDevice) {
   if (device.phone_mode === 'volte') {
@@ -87,6 +105,7 @@ function isDeviceBusy(device: PhoneDevice) {
 }
 
 function deviceModeLabel(device?: PhoneDevice) {
+  if (device?.phone_mode === 'modem_voice') return '模组直拨'
   if (device?.phone_mode === 'volte') return 'VoLTE'
   return device?.phone_mode === 'cellular' ? '蜂窝数据' : 'WiFi calling'
 }
@@ -95,6 +114,12 @@ function deviceStatus(device?: PhoneDevice) {
   if (!device) return '未选择设备'
   if (isDeviceBusy(device)) return '通话占用'
   const mode = deviceModeLabel(device)
+  if (device.phone_mode === 'modem_voice') {
+    if (device.voice.phase === 'restarting') return `${mode} · 重启模组中`
+    if (device.voice.last_error) return `${mode} · 准备失败`
+    if (device.voice.phase === 'preparing') return `${mode} · 准备音频中`
+    return `${mode} · ${device.voice.ready ? '就绪' : '未就绪'}`
+  }
   if (isDeviceReady(device) || device.vowifi_active) return `${mode} · 就绪`
   if (device.phone_mode === 'volte' && device.vowifi_enabled) {
     if (device.native_volte?.ims_registered || device.native_volte?.phase === 'registered') return `${mode} · IMS 已注册`
@@ -114,7 +139,7 @@ function deviceStatus(device?: PhoneDevice) {
 
 const selectedMode = computed(() => {
   const mode = selected.value?.phone_mode
-  if (mode === 'cellular' || mode === 'volte') return mode
+  if (mode === 'cellular' || mode === 'volte' || mode === 'modem_voice') return mode
   return 'wifi'
 })
 const selectedStrategy = computed(() => selected.value?.data_strategy === 'always' ? 'always' : 'on_demand')
@@ -165,13 +190,14 @@ async function toggleWifiCalling(rawVal: string | number | boolean) {
   }
 }
 
-async function changePhoneMode(mode: string) {
-  if (!selectedDevice.value || !!call.value || modePending.value) return
-  if ((mode === 'wifi' || mode === 'cellular') && selected.value?.software_ims_blocked) {
-    mode = 'volte'
-  }
-  if ((mode === 'cellular' || mode === 'volte') && selected.value?.rf_lock) {
-    ElMessage.warning('这张 Lebara UK 分享卡不能切蜂窝或 VoLTE，驻国内网会切到 20404，WiFi calling 会废')
+async function changePhoneMode(mode: string | number | boolean | undefined) {
+  if (typeof mode !== 'string') return
+  if (!selected.value || !!call.value || modePending.value) return
+  const target = { ...selected.value }
+  const strategy = selectedStrategy.value
+  const disabledReason = phoneModeDisabledReason(target, mode)
+  if (disabledReason) {
+    ElMessage.warning(disabledReason)
     return
   }
   if (mode === selectedMode.value) {
@@ -179,16 +205,26 @@ async function changePhoneMode(mode: string) {
     if (selected.value && (isDeviceReady(selected.value) || selected.value.vowifi_active)) return
   }
   modePending.value = true
+  modeRevision++
   phone.clearError()
   try {
-    const result = await devicesService.enableVoWiFi(selectedDevice.value, {
-      mode,
-      data_strategy: selectedStrategy.value
+    const changed = await confirmPhoneModeChange({
+      target, mode, current: () => selected.value, hasCall: () => !!call.value,
+      confirm: ({ title, message }) => ElMessageBox.confirm(message, title, {
+        confirmButtonText: '确认切换', cancelButtonText: '保持当前模式', type: 'warning',
+        distinguishCancelAndClose: true, closeOnClickModal: false
+      }),
+      apply: async () => {
+        const result = await devicesService.enableVoWiFi(target.id, { mode, data_strategy: strategy })
+        if (!result.ok) throw new Error(result.error?.message || '切换通话方式失败')
+      }
     })
-    if (!result.ok) throw new Error(result.error?.message || '切换通话方式失败')
+    if (!changed) return
     await phone.refresh()
     if (mode === 'cellular') {
       ElMessage.success('已切到蜂窝。会正常驻网；要走流量再到卡策略打开「网络」')
+    } else if (mode === 'modem_voice') {
+      ElMessage.success('已选择模组直拨，正在检查设备并准备音频')
     } else if (mode === 'volte') {
       ElMessage.success('已切到 VoLTE。会驻网并由模组原生 IMS 打电话；打开「网络」才会走上网流量')
     } else {
@@ -227,7 +263,17 @@ function appendDigit(digit: string) {
     void sendDTMF(digit)
     return
   }
-  if (callee.value.length < 32) callee.value += digit
+  if (digit === '+') {
+    if (!callee.value) callee.value = '+'
+    return
+  }
+  if (callee.value.length < (callee.value.startsWith('+') ? 33 : 32)) callee.value += digit
+}
+
+function insertDevicePrefix() {
+  if ((!callee.value || callee.value === '+') && selected.value?.phone_country_code) {
+    callee.value = `+${selected.value.phone_country_code}`
+  }
 }
 
 function eraseDigit() {
@@ -339,8 +385,9 @@ function toggleHold() {
   return runAction(call.value?.held ? '恢复通话' : '保持', () => phone.toggleHold())
 }
 
-function takeOver(current: PhoneCall) {
-  return runAction('接管', () => phone.takeOver(current), '已接管这通电话')
+function takeOver(current: PhoneCall, mode: 'listen-only' | 'two-way') {
+  const label = mode === 'listen-only' ? '仅听接管' : '双向接管'
+  return runAction(label, () => phone.takeOver(current, mode), `已${label}这通电话`)
 }
 
 async function sendDTMF(digit: string) {
@@ -394,8 +441,9 @@ async function sendDTMF(digit: string) {
               v-model="selectedDevice"
               aria-label="语音设备"
               placeholder="选择语音设备"
-              :disabled="!!call"
+              :disabled="!!call || modePending"
               popper-class="phone-device-dropdown"
+              @change="rememberDevice"
             >
               <el-option v-if="!phone.devices.length" label="无可用设备" value="" />
               <el-option
@@ -411,10 +459,12 @@ async function sendDTMF(digit: string) {
                 :model-value="selectedMode"
                 size="small"
                 :disabled="!!call || modePending"
+                @change="changePhoneMode"
               >
-                <el-radio-button value="wifi" :disabled="!!selected?.software_ims_blocked" @click="void changePhoneMode('wifi')">WiFi calling</el-radio-button>
-                <el-radio-button value="cellular" :disabled="!!selected?.rf_lock || !!selected?.software_ims_blocked" @click="void changePhoneMode('cellular')">蜂窝数据</el-radio-button>
-                <el-radio-button value="volte" :disabled="!!selected?.rf_lock" @click="void changePhoneMode('volte')">VoLTE</el-radio-button>
+                <el-radio-button value="wifi" :disabled="!!phoneModeDisabledReason(selected, 'wifi')" :title="phoneModeDisabledReason(selected, 'wifi')">WiFi calling</el-radio-button>
+                <el-radio-button value="cellular" :disabled="!!phoneModeDisabledReason(selected, 'cellular')" :title="phoneModeDisabledReason(selected, 'cellular')">蜂窝数据</el-radio-button>
+                <el-radio-button value="volte" :disabled="!!phoneModeDisabledReason(selected, 'volte')" :title="phoneModeDisabledReason(selected, 'volte')">VoLTE</el-radio-button>
+                <el-radio-button value="modem_voice" :disabled="!!phoneModeDisabledReason(selected, 'modem_voice')" :title="phoneModeDisabledReason(selected, 'modem_voice')">模组直拨</el-radio-button>
               </el-radio-group>
               <el-select
                 v-if="selectedMode === 'cellular'"
@@ -432,9 +482,14 @@ async function sendDTMF(digit: string) {
                   ? (selectedStrategy === 'always' ? '网络已开，数据会保持连接。' : '网络已开，只有拨号时才连数据，挂断后关闭。')
                   : '会正常驻网，待机不走流量。打蜂窝电话会临时打开数据。' }}
               </p>
+              <div v-if="selectedMode === 'modem_voice'" class="phone-mode-hint" role="status" aria-live="polite">
+                <p>使用 SIM 卡拨打和接听，声音通过网页传输。接通后可用键盘按键。</p>
+                <p v-if="selected?.voice.last_error" class="phone-mode-hint is-warn" role="alert">{{ selected.voice.last_error }}</p>
+                <el-button v-if="selected?.voice.phase === 'failed'" :loading="modePending" :disabled="!!call" @click="void changePhoneMode('modem_voice')">重新准备</el-button>
+              </div>
               <p v-if="selectedMode === 'volte'" class="phone-mode-hint">
                 {{ selected?.software_ims_blocked
-                  ? '这张卡没有软件 IMS（WiFi calling / 蜂窝数据），只用模组原生 VoLTE。打开「网络」才会用上网流量。'
+                  ? '这张卡需要使用模组驻网通话，可选择 VoLTE 或已适配的模组直拨。打开「网络」才会用上网流量。'
                   : selected?.native_volte?.uac_unusable
                     ? '这台模组的 USB 声卡不能开（会把 QMI 打挂）。VoLTE 信令能打，没有模组声音。'
                     : selected?.native_volte?.reboot_required
@@ -527,11 +582,16 @@ async function sendDTMF(digit: string) {
           </div>
 
           <div v-else-if="call.read_only" class="takeover-panel">
-            <strong>此电话由另一个浏览器控制</strong>
-            <p>当前只能查看状态。显式接管会断开原浏览器媒体并把控制租约转移到本标签页。</p>
-            <button type="button" class="secondary-button" :disabled="!!action || !phone.secureContext" @click="takeOver(call)">
-              接管电话
-            </button>
+            <strong>接管这通电话</strong>
+            <p>接管后可在本页控制通话，原浏览器的媒体连接会断开。仅听不申请麦克风权限；双向语音需要受信任的 HTTPS。</p>
+            <div class="restore-actions">
+              <button type="button" class="restore-button" :disabled="!!action || callEnding" @click="takeOver(call, 'listen-only')">
+                <el-icon><Speaker224Regular /></el-icon>仅听接管
+              </button>
+              <button type="button" class="restore-button" :disabled="!!action || callEnding || !phone.secureContext" @click="takeOver(call, 'two-way')">
+                <el-icon><Mic24Regular /></el-icon>双向接管
+              </button>
+            </div>
           </div>
 
           <template v-else>
@@ -571,7 +631,7 @@ async function sendDTMF(digit: string) {
 
             <div v-if="connected && keypadVisible" class="active-keypad">
               <p aria-live="polite">发送 DTMF{{ lastDTMF ? `：${lastDTMF}` : '' }}</p>
-              <PhoneDialPad :disabled="!!action || callEnding" @digit="appendDigit" />
+              <PhoneDialPad :disabled="!!action || !phone.canSendDTMF" @digit="appendDigit" />
             </div>
 
             <div class="call-controls" aria-label="通话控制">
@@ -592,7 +652,7 @@ async function sendDTMF(digit: string) {
               <button
                 type="button"
                 class="control-button"
-                :disabled="!!action || callEnding || !connected || call.read_only"
+                :disabled="!!action || callEnding || !connected || call.read_only || modemCall"
                 :aria-pressed="!!call.held"
                 @click="toggleHold"
               >
@@ -605,7 +665,7 @@ async function sendDTMF(digit: string) {
               <button
                 type="button"
                 class="control-button"
-                :disabled="callEnding || !connected"
+                :disabled="!phone.canSendDTMF"
                 :aria-pressed="keypadVisible"
                 @click="keypadVisible = !keypadVisible"
               >
@@ -624,26 +684,37 @@ async function sendDTMF(digit: string) {
           </div>
 
           <div class="number-field">
-            <label for="callee">电话号码</label>
-            <div>
+            <div class="number-field-heading">
+              <label for="callee">电话号码</label>
+              <button
+                v-if="selected?.phone_country_code"
+                type="button"
+                :disabled="!!callee && callee !== '+'"
+                :aria-label="`填入本卡国际区号 +${selected.phone_country_code}`"
+                @click="insertDevicePrefix"
+              >本卡区号 +{{ selected.phone_country_code }}</button>
+            </div>
+            <div class="number-input">
               <input
                 id="callee"
                 v-model.trim="callee"
                 type="tel"
                 inputmode="tel"
-                maxlength="32"
+                maxlength="33"
                 autocomplete="tel"
                 placeholder="输入号码"
+                :aria-invalid="!!calleeError"
+                :aria-describedby="calleeError ? 'callee-error' : undefined"
               />
               <button type="button" aria-label="删除末位号码" :disabled="!callee" @click="eraseDigit">
                 <el-icon><Backspace24Regular /></el-icon>
               </button>
             </div>
-            <small v-if="callee && !CALLEE_PATTERN.test(callee)">号码只能包含可选的前导 + 和 1–32 位数字</small>
+            <small v-if="calleeError" id="callee-error" role="alert">{{ calleeError }}</small>
             <small v-else-if="identities.subtitleFor(callee, selectedDevice)" class="callee-hint">{{ identities.titleFor(callee, selectedDevice) }}{{ identities.subtitleFor(callee, selectedDevice) ? ` · ${identities.subtitleFor(callee, selectedDevice)}` : '' }}</small>
           </div>
 
-          <PhoneDialPad @digit="appendDigit" />
+          <PhoneDialPad allow-plus :plus-disabled="!!callee" @digit="appendDigit" />
 
           <div class="call-mode-actions" aria-label="呼叫模式">
             <button

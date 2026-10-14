@@ -328,6 +328,7 @@ const upstreamRows = computed(() => upstreamStore.proxies.map(proxy => (
   createUpstreamProxyPresentation({
     proxy,
     health: upstreamStore.probeStatusMap[proxy.id],
+    ruleCountryCodes: upstreamStore.getRulesForProxy(proxy.id).filter(rule => rule.enabled).map(rule => rule.country_code),
     ruleCount: upstreamStore.getRulesForProxy(proxy.id).length
   })
 )))
@@ -522,11 +523,13 @@ onMounted(() => {
 })
 
 // 前置代理轮询
-const upPollEnabled = computed(() => !upstreamLoading.value && activeTab.value === 'upstream')
-usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
+const autoProbe = ref(true)
+const upstreamProbeIntervalMs = 60000
+const upPollEnabled = computed(() => autoProbe.value && !upstreamLoading.value && activeTab.value === 'upstream')
+usePollingScheduler(() => fetchUpstream({ silent: true }), upstreamProbeIntervalMs, {
   enabled: upPollEnabled,
-  maxIntervalMs: 60000,
-  backgroundIntervalMs: 30000
+  maxIntervalMs: upstreamProbeIntervalMs,
+  backgroundIntervalMs: upstreamProbeIntervalMs
 })
 </script>
 
@@ -557,6 +560,7 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
           />
 
           <ProxyUpstreamInventory
+            v-model:auto-probe="autoProbe"
             :loading="upstreamLoading"
             :refreshing="upstreamRefreshing"
             :rows="upstreamRows"

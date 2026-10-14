@@ -25,6 +25,10 @@ jobs:
   build:
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      revision: ${{ steps.tag.outputs.sha }}
+      digest: ${{ steps.image.outputs.digest }}
     steps:
       - name: Resolve release tag
         id: tag
@@ -120,6 +124,7 @@ jobs:
           echo "revision=${{ steps.tag.outputs.sha }}" >> "${GITHUB_OUTPUT}"
 
       - name: Build and push
+        id: image
         if: steps.tag.outputs.skip != 'true'
         uses: docker/build-push-action@v5
         with:
@@ -128,10 +133,25 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          labels: |
+            org.opencontainers.image.title=HiDeck
+            org.opencontainers.image.source=https://github.com/yibaiba/hideck
+            org.opencontainers.image.version=${{ steps.tag.outputs.version }}
+            org.opencontainers.image.revision=${{ steps.tag.outputs.sha }}
           provenance: false
           sbom: false
           build-args: |
             VERSION=${{ steps.vars.outputs.version }}
             BUILDTIME=${{ steps.vars.outputs.buildtime }}
             REVISION=${{ steps.vars.outputs.revision }}
+
+  fnos:
+    needs: build
+    if: needs.build.outputs.digest != ''
+    permissions:
+      contents: write
+    uses: ./.github/workflows/fnos-package.yml
+    with:
+      version: ${{ needs.build.outputs.version }}
+      image_digest: ${{ needs.build.outputs.digest }}
+      source_revision: ${{ needs.build.outputs.revision }}

@@ -84,7 +84,8 @@ func (a serviceAdapter) SetOnSMSReadinessChanged(fn func(SMSReadiness)) {
 
 func adaptSMSReadiness(readiness imscore.SMSReadiness) SMSReadiness {
 	return SMSReadiness{
-		Registered: readiness.Registered, ProfileReady: readiness.ProfileReady,
+		ReceiverPending: readiness.ReceiverPending,
+		Registered:      readiness.Registered, ProfileReady: readiness.ProfileReady,
 		TransportReady: readiness.TransportReady, ReceiverReady: readiness.ReceiverReady,
 		SMSCPresent: readiness.SMSCPresent, Ready: readiness.Ready,
 		MOReady: readiness.MOReady, HealthReady: readiness.HealthReady, Reason: readiness.Reason,
@@ -261,7 +262,8 @@ func (a serviceAdapter) StatusCurrent() Status {
 	return Status{State: State{
 		Phase: "ready", DeviceID: status.DeviceID,
 		IMSReady: status.IsRegistered(), SMSReady: sms.Ready, SMSMOReady: sms.MOReady, SMSHealthReady: sms.HealthReady,
-		RegStatus: boolStatus(status.IsRegistered()), RegStatusText: status.RegStatus,
+		SMSRXPending: sms.ReceiverPending,
+		RegStatus:    boolStatus(status.IsRegistered()), RegStatusText: status.RegStatus,
 		SessionState: "established", IMSState: status.RegState, SMSReadyReason: sms.Reason,
 	}}
 }
@@ -404,12 +406,29 @@ func (a *sipResultDeliveryStoreAdapter) MarkSMSDeliveryPartSIPResult(
 }
 
 // CreateSMSDelivery creates a delivery record.
-func (a *deliveryStoreAdapter) CreateSMSDelivery(messageID, imsi, deviceID, peer, content string, partsTotal int, at time.Time) error {
+func (a *deliveryStoreAdapter) CreateSMSDelivery(
+	messageID, imsi, deviceID, peer, content string,
+	partsTotal int,
+	at time.Time,
+) error {
 	if a == nil || a.store == nil {
 		return errors.New("runtimehost: no delivery store")
 	}
 	return deliveryStoreErrorToInternal(
 		a.store.CreateSMSDelivery(messageID, imsi, deviceID, peer, content, partsTotal, at),
+	)
+}
+
+func (a *deliveryStoreAdapter) CreateSMSDeliveryForIdentity(record smsdelivery.DeliveryRecord) error {
+	if a == nil || a.store == nil {
+		return errors.New("runtimehost: no delivery store")
+	}
+	if store, ok := a.store.(messaging.IdentityDeliveryStore); ok {
+		return deliveryStoreErrorToInternal(store.CreateSMSDeliveryForIdentity(record))
+	}
+	return a.CreateSMSDelivery(
+		record.MessageID, record.IMSI, record.DeviceID,
+		record.Peer, record.Content, record.PartsTotal, record.At,
 	)
 }
 
@@ -475,6 +494,7 @@ func deliveryStatusFromInternal(st *imscore.DeliveryStatus) *messaging.DeliveryS
 	out := &messaging.DeliveryStatus{
 		MessageID:  st.MessageID,
 		IMSI:       st.IMSI,
+		ICCID:      st.ICCID,
 		DeviceID:   st.DeviceID,
 		Peer:       st.Peer,
 		Content:    st.Content,
@@ -504,6 +524,7 @@ func deliveryStatusToInternal(st *messaging.DeliveryStatus) *imscore.DeliverySta
 	out := &imscore.DeliveryStatus{
 		MessageID:  st.MessageID,
 		IMSI:       st.IMSI,
+		ICCID:      st.ICCID,
 		DeviceID:   st.DeviceID,
 		Peer:       st.Peer,
 		Content:    st.Content,

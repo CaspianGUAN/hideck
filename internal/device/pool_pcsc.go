@@ -41,9 +41,12 @@ func (p *Pool) addPCSCWorkerFromConfig(devCfg config.DeviceConfig, attempt uint6
 		_ = deviceBackend.Close()
 		return nil, fmt.Errorf("设备 %s 启动流程已超时放弃", devCfg.ID)
 	}
+	transition := p.policyTransitionFor(devCfg.ID)
+	transition.Lock()
 	p.mu.Lock()
 	p.workers[devCfg.ID] = w
 	p.mu.Unlock()
+	transition.Unlock()
 	if err := w.RefreshIdentityLive(nil, "pcsc_startup"); err != nil {
 		p.removeWorkerRegistrationIfCurrent(w)
 		_ = deviceBackend.Close()

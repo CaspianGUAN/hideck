@@ -85,6 +85,9 @@ func parseCommaFields(s string) []string {
 
 func (m *Manager) formatURC(line string) urcFormatResult {
 	s := strings.TrimSpace(line)
+	if hasADBAuthResponse(s) {
+		return urcFormatResult{Level: urcLogDebug, Key: "QADBKEY", Msg: "URC: ADB authorization [redacted]"}
+	}
 	if s == "" {
 		return urcFormatResult{Level: urcLogDebug, Key: "", Msg: "URC"}
 	}

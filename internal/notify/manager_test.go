@@ -310,7 +310,13 @@ func TestManagerUpdateConfigFailureKeepsCurrentChannels(t *testing.T) {
 func TestManagerRevokeChannelRetiresOnlyMatchingChannel(t *testing.T) {
 	telegram := &namedLifecycleChannel{name: "telegram", closed: make(chan struct{})}
 	other := &namedLifecycleChannel{name: "other", closed: make(chan struct{})}
-	manager := &Manager{channels: []Channel{telegram, other}}
+	manager := &Manager{
+		channels: []Channel{telegram, other},
+		deviceFilters: map[Channel]map[string]bool{
+			telegram: {"wwan0": true},
+			other:    {"wwan1": true},
+		},
+	}
 
 	if !manager.RevokeChannel("telegram") {
 		t.Fatal("RevokeChannel() = false, want true")
@@ -327,6 +333,12 @@ func TestManagerRevokeChannelRetiresOnlyMatchingChannel(t *testing.T) {
 	}
 	if names := manager.GetChannelNames(); len(names) != 1 || names[0] != "other" {
 		t.Fatalf("GetChannelNames() = %v", names)
+	}
+	if _, exists := manager.deviceFilters[telegram]; exists {
+		t.Fatal("revoked channel retained its device filter")
+	}
+	if _, exists := manager.deviceFilters[other]; !exists {
+		t.Fatal("unrelated channel lost its device filter")
 	}
 	manager.Close()
 }
@@ -565,7 +577,7 @@ func TestFormatCallResultMessageUsesIncomingCallStyle(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := formatCallResultMessage(callResultMessage{
-				DeviceID: tt.deviceID, Peer: tt.peer, Direction: tt.direction,
+				Device: tt.deviceID, Peer: tt.peer, Direction: tt.direction,
 				Status: tt.status, Reason: tt.reason,
 			}, "")
 			if got != tt.want {

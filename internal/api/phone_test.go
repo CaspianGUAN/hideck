@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -88,6 +89,28 @@ func TestPhoneRoutesEnforceAuthenticationAndControlLease(t *testing.T) {
 	if hangup.Code != http.StatusNoContent {
 		t.Fatalf("hangup status=%d body=%s", hangup.Code, hangup.Body.String())
 	}
+
+	releaseOffer, closeReleasePeer := browserPhoneOffer(t)
+	defer closeReleasePeer()
+	releaseResponse := performPhoneRequest(router, http.MethodPost, "/api/phone/media", token, "", map[string]string{"sdp": releaseOffer})
+	if releaseResponse.Code != http.StatusCreated {
+		t.Fatalf("release media status=%d body=%s", releaseResponse.Code, releaseResponse.Body.String())
+	}
+	var disposable struct {
+		MediaID string `json:"media_id"`
+		Lease   string `json:"lease"`
+	}
+	if err := json.Unmarshal(releaseResponse.Body.Bytes(), &disposable); err != nil {
+		t.Fatal(err)
+	}
+	foreignRelease := performPhoneRequest(router, http.MethodDelete, "/api/phone/media/"+disposable.MediaID, token, "foreign", nil)
+	if foreignRelease.Code != http.StatusForbidden {
+		t.Fatalf("foreign media release status=%d body=%s", foreignRelease.Code, foreignRelease.Body.String())
+	}
+	ownedRelease := performPhoneRequest(router, http.MethodDelete, "/api/phone/media/"+disposable.MediaID, token, disposable.Lease, nil)
+	if ownedRelease.Code != http.StatusNoContent {
+		t.Fatalf("owned media release status=%d body=%s", ownedRelease.Code, ownedRelease.Body.String())
+	}
 }
 
 func TestPhoneEventStreamDisablesProxyBuffering(t *testing.T) {
@@ -115,26 +138,29 @@ func TestPhoneEventStreamDisablesProxyBuffering(t *testing.T) {
 	server.registerPhoneRoutes(api)
 	token := testSessionToken(t, "secret", time.Now().Add(time.Hour))
 
-	ctx, cancel := context.WithCancel(context.Background())
-	request := httptest.NewRequest(http.MethodGet, "/api/phone/events?after_id=0", nil).WithContext(ctx)
+	ts := httptest.NewServer(router)
+	defer ts.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/phone/events?after_id=0", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	request.Header.Set("Authorization", "Bearer "+token)
-	response := httptest.NewRecorder()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		router.ServeHTTP(response, request)
-	}()
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) && response.Header().Get("Content-Type") == "" {
-		time.Sleep(5 * time.Millisecond)
+	response, err := ts.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
 	}
-	cancel()
-	<-done
-	if response.Header().Get("X-Accel-Buffering") != "no" {
-		t.Fatalf("X-Accel-Buffering = %q, want no", response.Header().Get("X-Accel-Buffering"))
+	defer response.Body.Close()
+	if response.Header.Get("X-Accel-Buffering") != "no" {
+		t.Fatalf("X-Accel-Buffering = %q, want no", response.Header.Get("X-Accel-Buffering"))
 	}
-	if !bytes.Contains(response.Body.Bytes(), []byte(": connected")) {
-		t.Fatalf("missing SSE connected comment: %s", response.Body.String())
+	connected := make([]byte, len(": connected\n\n"))
+	if _, err := io.ReadFull(response.Body, connected); err != nil {
+		t.Fatalf("read SSE prelude: %v", err)
+	}
+	if string(connected) != ": connected\n\n" {
+		t.Fatalf("SSE prelude = %q", connected)
 	}
 }
 

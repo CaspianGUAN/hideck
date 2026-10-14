@@ -19,6 +19,17 @@ function device(partial: Partial<DeviceOverviewItem> = {}): DeviceOverviewItem {
   }
 }
 
+test('registered IMS with unverified reception is not shown as building or failed', () => {
+  const presentation = createOverviewConnectionPresentation(device({
+    vowifi_enabled: true, vowifi_active: true,
+    vowifi_runtime: { sim_ready: true, access_ready: true, tunnel_ready: true, ims_ready: true,
+      sms_mo_ready: true, sms_ready: false, sms_rx_pending: true }
+  }))
+  assert.equal(presentation.tone, 'is-pending')
+  assert.equal(presentation.detail, 'IMS 已注册，短信接收待验证')
+  assert.equal(presentation.stages[5]?.ready, undefined)
+})
+
 test('volte registered is not shown as wifi calling waiting', () => {
   const presentation = createOverviewConnectionPresentation(device({
     phone_mode: 'volte',

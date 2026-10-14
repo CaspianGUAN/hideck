@@ -198,6 +198,8 @@ export function maskSavedWeComURLs(urls: string[]): string[] {
 export const useSettingsStore = defineStore('settings', () => {
   const systemInfo = ref<SystemInfo>({ ...DEFAULT_SYSTEM_INFO })
   const notifications = ref<NotificationsSettingsResponse>({})
+  // Channel name → device IDs whose SMS and calls it receives; empty = all.
+  const deviceFilters = ref<Record<string, string[]>>({})
   const passwordForm = ref<PasswordForm>({ ...DEFAULT_PASSWORD_FORM })
   const telegramForm = ref<TelegramForm>({ ...DEFAULT_TELEGRAM_FORM })
   const feishuForm = ref<FeishuForm>({ ...DEFAULT_FEISHU_FORM })
@@ -243,6 +245,7 @@ export const useSettingsStore = defineStore('settings', () => {
     const result = await getNotificationSnapshot(true)
     if (result.ok) {
       notifications.value = result.data || {}
+      deviceFilters.value = { ...(result.data.device_filters || {}) }
       const tg = result.data.telegram || {}
       const fs = result.data.feishu || {}
       const qq = result.data.qq || {}
@@ -494,7 +497,8 @@ export const useSettingsStore = defineStore('settings', () => {
         enabled: !!weComSettings.value.enabled,
         urls: Array.isArray(weComSettings.value.urls) ? weComSettings.value.urls : [],
         payload_template: String(weComSettings.value.payload_template || '')
-      }
+      },
+      device_filters: deviceFilters.value
     }
   }
 
@@ -602,6 +606,7 @@ export const useSettingsStore = defineStore('settings', () => {
   return {
     systemInfo,
     notifications,
+    deviceFilters,
     passwordForm,
     telegramForm,
     feishuForm,

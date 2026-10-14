@@ -12,6 +12,7 @@ services:
       - ./config:/app/config
       - ./data:/app/data
       - ./logs:/app/logs
+      # Keep the whole /dev bind: USB re-enumeration changes ADB and PCM nodes.
       - /dev:/dev
     environment:
       TZ: Asia/Shanghai

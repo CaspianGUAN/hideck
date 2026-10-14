@@ -19,10 +19,12 @@ func (s *Session) RekeyIKESA() error {
 	if s.ikeRekeyInCooldown() {
 		return nil
 	}
-	if s.hasRetiredIKESA() {
-		return errors.New("swu: previous IKE SA is awaiting Delete")
+	s.dropStaleRetiredIKESA()
+	if err := s.performIKESARekey(s.ctx); err != nil {
+		return err
 	}
-	return s.performIKESARekey(s.ctx)
+	s.Logger.Info("IKE SA rekey completed")
+	return nil
 }
 
 func (s *Session) RekeyChildSA() error {
@@ -31,7 +33,11 @@ func (s *Session) RekeyChildSA() error {
 	if s.childRekeyInCooldown() {
 		return nil
 	}
-	return s.performChildSARekey(s.ctx)
+	err := s.performChildSARekey(s.ctx)
+	if err == nil {
+		s.Logger.Info("CHILD_SA rekey completed")
+	}
+	return err
 }
 
 func (s *Session) HandleRekeyIKESARequest(msgID uint32, payloads []ikev2.Payload) error {

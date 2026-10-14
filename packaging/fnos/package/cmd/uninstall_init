@@ -1,0 +1,4 @@
+#!/bin/sh
+# Required fnOS hook. The platform handles stopping its Docker project.
+# Do not stop unrelated containers or remove user data here.
+exit 0

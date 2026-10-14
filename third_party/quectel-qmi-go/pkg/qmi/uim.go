@@ -790,15 +790,15 @@ func decodeUIMDigits(data []byte) string {
 	}
 	isASCII := true
 	for _, b := range data {
-		if b < '0' || b > '9' {
+		if !(b >= '0' && b <= '9' || b >= 'A' && b <= 'F' || b >= 'a' && b <= 'f') {
 			isASCII = false
 			break
 		}
 	}
 	if isASCII {
-		return string(data)
+		return strings.TrimRight(strings.ToUpper(string(data)), "F")
 	}
-	return decodeSwappedBCD(data)
+	return decodeICCID(data)
 }
 
 func parseSlotStatusTLVs(tlvs []TLV) (*UIMSlotStatus, error) {
@@ -1305,7 +1305,7 @@ func (u *UIMService) GetICCID(ctx context.Context) (string, error) {
 	if len(data) == 0 {
 		return "", fmt.Errorf("empty ICCID")
 	}
-	return decodeSwappedBCD(data), nil
+	return decodeICCID(data), nil
 }
 
 func (u *UIMService) GetIMSI(ctx context.Context) (string, error) {

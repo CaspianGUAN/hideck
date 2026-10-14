@@ -291,7 +291,8 @@ func (s *Service) finalizeInboundSMSData(
 	s.reportMTQueueBlocked(mtSMSIdentity(message))
 	fingerprint := buildMTSMSFingerprint(message, raw)
 	return inboundSIPResult{
-		response: response,
+		smsReceived: true,
+		response:    response,
 		afterReply: func() {
 			if fragmentKey != "" {
 				s.markFragmentAcked(fragmentKey, message.partNo)

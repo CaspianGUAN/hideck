@@ -12,16 +12,18 @@ var ErrSMSInboundFragmentCollision = errors.New("SMS inbound fragment collision"
 
 type SMSInboundFragmentScope struct {
 	DeviceID   string
+	ICCID      string
 	IMSI       string
 	SessionKey string
 }
 
 type SMSInboundFragment struct {
 	ID            uint      `gorm:"primaryKey"`
-	DeviceID      string    `gorm:"column:device_id;uniqueIndex:idx_sms_inbound_fragment_scope,priority:1"`
-	IMSI          string    `gorm:"column:imsi;uniqueIndex:idx_sms_inbound_fragment_scope,priority:2"`
-	SessionKey    string    `gorm:"column:session_key;uniqueIndex:idx_sms_inbound_fragment_scope,priority:3"`
-	Sequence      int       `gorm:"column:sequence;uniqueIndex:idx_sms_inbound_fragment_scope,priority:4"`
+	DeviceID      string    `gorm:"column:device_id;index"`
+	ICCID         string    `gorm:"column:iccid"`
+	IMSI          string    `gorm:"column:imsi;index"`
+	SessionKey    string    `gorm:"column:session_key"`
+	Sequence      int       `gorm:"column:sequence"`
 	Reference     int       `gorm:"column:reference"`
 	ReferenceBits int       `gorm:"column:reference_bits"`
 	Total         int       `gorm:"column:total"`
@@ -52,7 +54,7 @@ func LoadSMSInboundFragments(owner SMSInboundFragmentScope) ([]SMSInboundFragmen
 	}
 	owner = normalizeSMSInboundFragmentScope(owner)
 	var fragments []SMSInboundFragment
-	err := DB.Where("device_id = ? AND imsi = ?", owner.DeviceID, owner.IMSI).
+	err := DB.Where("iccid = ? AND imsi = ?", owner.ICCID, owner.IMSI).
 		Order("session_key ASC, sequence ASC").Find(&fragments).Error
 	return fragments, err
 }
@@ -100,7 +102,8 @@ func saveSMSInboundFragmentRow(
 	}
 	now := time.Now()
 	fragment.ID = 0
-	fragment.DeviceID, fragment.IMSI, fragment.SessionKey = scope.DeviceID, scope.IMSI, scope.SessionKey
+	fragment.DeviceID, fragment.ICCID = scope.DeviceID, scope.ICCID
+	fragment.IMSI, fragment.SessionKey = scope.IMSI, scope.SessionKey
 	fragment.CreatedAt, fragment.UpdatedAt = now, now
 	if err := tx.Create(&fragment).Error; err != nil {
 		return false, "", err
@@ -113,7 +116,7 @@ func DeleteSMSInboundFragments(scope SMSInboundFragmentScope) error {
 		return errors.New("database not initialized")
 	}
 	scope = normalizeSMSInboundFragmentScope(scope)
-	if scope.DeviceID == "" || scope.IMSI == "" || scope.SessionKey == "" {
+	if scope.ICCID == "" || scope.IMSI == "" || scope.SessionKey == "" {
 		return errors.New("invalid SMS inbound fragment scope")
 	}
 	return fragmentScopeQuery(DB, scope).Delete(&SMSInboundFragment{}).Error
@@ -166,20 +169,21 @@ func loadSMSInboundFragmentSession(
 
 func fragmentScopeQuery(tx *gorm.DB, scope SMSInboundFragmentScope) *gorm.DB {
 	return tx.Where(
-		"device_id = ? AND imsi = ? AND session_key = ?",
-		scope.DeviceID, scope.IMSI, scope.SessionKey,
+		"iccid = ? AND imsi = ? AND session_key = ?",
+		scope.ICCID, scope.IMSI, scope.SessionKey,
 	)
 }
 
 func normalizeSMSInboundFragmentScope(scope SMSInboundFragmentScope) SMSInboundFragmentScope {
 	scope.DeviceID = strings.TrimSpace(scope.DeviceID)
+	scope.ICCID = CanonicalICCID(scope.ICCID)
 	scope.IMSI = strings.TrimSpace(scope.IMSI)
 	scope.SessionKey = strings.TrimSpace(scope.SessionKey)
 	return scope
 }
 
 func validateSMSInboundFragment(scope SMSInboundFragmentScope, fragment SMSInboundFragment) error {
-	if scope.DeviceID == "" || scope.IMSI == "" || scope.SessionKey == "" {
+	if scope.ICCID == "" || scope.IMSI == "" || scope.SessionKey == "" {
 		return errors.New("invalid SMS inbound fragment scope")
 	}
 	if fragment.Total < 2 || fragment.Sequence < 1 || fragment.Sequence > fragment.Total {

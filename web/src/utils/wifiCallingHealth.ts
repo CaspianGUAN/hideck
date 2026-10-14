@@ -9,6 +9,7 @@ export type WiFiCallingHealthTone = 'neutral' | 'success' | 'warning' | 'danger'
 
 const stateLabels: Readonly<Record<WiFiCallingHealthState, string>> = Object.freeze({
   checking: '等待首次连接',
+  pending: '短信接收待验证',
   healthy: '运行稳定',
   recovering: '正在恢复',
   unavailable: '当前不可用',
@@ -47,7 +48,8 @@ export function wifiCallingHealthDetail(health?: WiFiCallingHealthSnapshot): str
   if (!health) return '本次服务启动后尚无 WiFi Calling 运行记录'
   if (!health.measured && health.state === 'unavailable') return health.last_reason || 'WiFi Calling 启动失败'
   if (!health.active) return health.last_reason ? `关闭原因：${health.last_reason}` : '当前会话已结束'
-  if (!health.measured) return '首次 IMS 注册成功后开始统计可用率'
+  if (health.state === 'pending') return 'IMS 已注册，尚无短信下行证据；待验证期间不计为正常或中断'
+  if (!health.measured) return 'IMS 注册成功且接收状态可判定后开始统计可用率'
   if (health.state === 'healthy') return `已稳定 ${formatHealthDuration(health.stable_seconds)}`
   return health.last_reason || '等待 IMS 连接恢复'
 }

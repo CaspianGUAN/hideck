@@ -106,6 +106,18 @@ func (s *Service) finalizeRecording(event voicehost.CallEvent) {
 		s.mu.RUnlock()
 		return
 	}
+	terminalDone := call.terminalDone
+	s.mu.RUnlock()
+	// HTTP hangup and backend events may finish the same call concurrently.
+	// Wait for the WAV close and terminal record write before publishing MP3.
+	if terminalDone != nil {
+		select {
+		case <-terminalDone:
+		case <-s.ctx.Done():
+			return
+		}
+	}
+	s.mu.RLock()
 	mixedPath, mixedAttempted := call.mixedAudioPath, call.mixedAttempted
 	s.mu.RUnlock()
 	audioPath := ""

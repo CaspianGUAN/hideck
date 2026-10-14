@@ -15,18 +15,11 @@ import (
 func (s *Session) resolveATCheckcodeValue(
 	mode string,
 	eapType uint8,
-	hasCheckcode bool,
 	serverValue []byte,
-	shouldEcho bool,
-) []byte {
-	if !hasCheckcode {
-		return nil
-	}
+) ([]byte, bool) {
 	switch normalizeAKAChallengeMode(mode) {
 	case "checkcode":
-		if shouldEcho {
-			return append([]byte(nil), serverValue...)
-		}
+		return append([]byte(nil), serverValue...), true
 	case "recompute":
 		hashType := "sha1"
 		if eapType == eapaka.TypeAKAPrime {
@@ -34,10 +27,10 @@ func (s *Session) resolveATCheckcodeValue(
 		}
 		checkcode := s.calcAKACheckcodeWithPending(hashType, nil)
 		if len(checkcode) > 0 {
-			return append([]byte{0, 0}, checkcode...)
+			return checkcode, true
 		}
 	}
-	return nil
+	return nil, false
 }
 
 func (s *Session) appendAKAChallengeMetaAttrs(
@@ -65,7 +58,10 @@ func (s *Session) appendAKAChallengeMetaAttrs(
 		// leaves the attribute out, which is VoCat's AIS challenge.
 		value, err := checkcode.CheckcodeValue()
 		if err == nil {
-			filtered = append(filtered, eapaka.CheckcodeAttribute(s.challengeCheckcode(mode, request.Type, value)))
+			resolved, include := s.challengeCheckcode(mode, request.Type, value)
+			if include {
+				filtered = append(filtered, eapaka.CheckcodeAttribute(resolved))
+			}
 		}
 	}
 	return append(filtered, eapaka.MACAttribute(nil))
@@ -229,25 +225,18 @@ func eapAttrDigest(value []byte) string {
 }
 
 // challengeCheckcode returns the AT_CHECKCODE value (without the reserved
-// bytes) for a challenge response; nil encodes the empty checkcode.
-func (s *Session) challengeCheckcode(mode string, eapType uint8, serverValue []byte) []byte {
+// bytes) for a challenge response and whether to include it; nil encodes the
+// empty checkcode.
+func (s *Session) challengeCheckcode(mode string, eapType uint8, serverValue []byte) ([]byte, bool) {
 	// SIMHub's accepted AIS response is 44 bytes for an 8-byte RES:
 	// AT_RES + empty AT_CHECKCODE + AT_MAC. Echoing a non-empty server
 	// checkcode makes that ePDG return a bare EAP-Failure.
 	if normalizeAKAChallengeMode(mode) == "empty" {
-		return nil
+		return nil, true
 	}
 	checkcodeMode := modeForCheckcode(mode)
-	if checkcodeMode == "recompute" && len(s.eapTranscript) == 0 {
-		return nil
+	if normalizeAKAChallengeMode(checkcodeMode) == "recompute" && len(s.eapTranscript) == 0 {
+		return nil, true
 	}
-	resolved := s.resolveATCheckcodeValue(checkcodeMode, eapType, true, serverValue, len(serverValue) > 0)
-	if checkcodeMode == "recompute" {
-		// recompute prefixes the two reserved bytes.
-		if len(resolved) > 2 {
-			return resolved[2:]
-		}
-		return nil
-	}
-	return resolved
+	return s.resolveATCheckcodeValue(checkcodeMode, eapType, serverValue)
 }

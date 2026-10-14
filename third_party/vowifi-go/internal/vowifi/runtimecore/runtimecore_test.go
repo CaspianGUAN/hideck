@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
 	"net"
 	"reflect"
 	"strings"
@@ -232,20 +233,6 @@ func TestBuildSWUConfigCarriesRuntimeState(t *testing.T) {
 	ticket[0] = 9
 	if !bytes.Equal(config.ResumeTicket, []byte{1, 2}) {
 		t.Fatal("BuildSWUConfig() retained resume ticket alias")
-	}
-}
-
-func TestFastReauthStoreReusesIdentityOnNewIKESession(t *testing.T) {
-	var store FastReauthStore
-	store.Capture()("reauth@example", []byte{1}, []byte{2}, []byte{3})
-	cfg := SessionConfig{}
-	store.Apply(&cfg)
-	if cfg.FastReauthID != "reauth@example" || !bytes.Equal(cfg.FastReauthMK, []byte{1}) {
-		t.Fatalf("applied FastReauth = %+v", cfg)
-	}
-	swuCfg := BuildSWUConfig(cfg)
-	if swuCfg.FastReauthID != "reauth@example" {
-		t.Fatalf("new IKE SA identity = %q", swuCfg.FastReauthID)
 	}
 }
 
@@ -998,3 +985,16 @@ func TestDeliveryStoreAdapterPreservesStatusMetadata(t *testing.T) {
 }
 
 var _ imsendpoint.Endpoint = (*imscore.Service)(nil)
+
+func TestCarrierPresetKeysReachSWUConfig(t *testing.T) {
+	build := func(mcc, mnc string) *swu.Config {
+		plan := carrierPlanFromCompatibility(carrier.ResolveEffectiveCarrierConfig(mcc, mnc))
+		return BuildSWUConfig(SessionConfig{Prepared: profile.PreparedSession{CarrierPlan: plan}})
+	}
+	if spark := build("530", "05"); !spark.WithholdDeviceIdentity || !spark.KeepChildSAOnRekeyDecline {
+		t.Fatalf("Spark NZ SWu config = %+v", spark)
+	}
+	if lebara := build("234", "87"); lebara.WithholdDeviceIdentity || lebara.KeepChildSAOnRekeyDecline {
+		t.Fatalf("Lebara UK SWu config = %+v", lebara)
+	}
+}

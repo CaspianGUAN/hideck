@@ -143,6 +143,9 @@ func (p *Pool) DisableVoWiFi(deviceID ...string) error {
 				return fmt.Errorf("设备 %s 正在切卡，暂不允许停用 VoWiFi", target)
 			}
 			p.stopNativeVoLTE(target, "disable_vowifi")
+			if err := p.stopModemVoice(target); err != nil {
+				return err
+			}
 			if err := p.voWiFiHost().Disable(p.ctx, target, "disable", false); err != nil {
 				return err
 			}
@@ -189,7 +192,7 @@ func (p *Pool) RestartVoWiFiForICCID(iccid string) error {
 	}
 	var deviceIDs []string
 	for _, w := range p.GetAllWorkers() {
-		if w == nil || !w.Config.VoWiFiEnabled {
+		if w == nil || !w.Config.VoWiFiEnabled || UsesModemPhoneControl(w.Config.PhoneMode) {
 			continue
 		}
 		if db.CanonicalICCID(w.CurrentICCID()) != iccid {

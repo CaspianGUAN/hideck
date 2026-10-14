@@ -1,0 +1,12 @@
+From: HiDeck maintainers
+Subject: Use FindProtobuf's exported include directories for cross builds
+
+The module-mode finder exports Protobuf_INCLUDE_DIRS. The uppercase plural
+variable is not provided, leaving libadb unable to include protobuf headers.
+
+--- a/vendor/CMakeLists.txt
++++ b/vendor/CMakeLists.txt
+@@ -117,2 +117,2 @@
+-include_directories(${PROTOBUF_INCLUDE_DIRS})
++include_directories(${Protobuf_INCLUDE_DIRS})
+ include_directories(${CMAKE_CURRENT_BINARY_DIR})

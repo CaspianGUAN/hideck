@@ -157,6 +157,7 @@ func weComTemplateValues(ctx NotificationContext) map[string]string {
 		"timestamp":    timestamp.UTC().Format(time.RFC3339),
 		"content":      ctx.Content,
 		"number":       ctx.Number,
+		"local_number": ctx.LocalNumber,
 		"contact_name": ctx.ContactName,
 		"attribution":  ctx.Attribution,
 		"device_id":    strings.TrimSpace(ctx.DeviceID),

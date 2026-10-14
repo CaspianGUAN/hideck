@@ -230,6 +230,8 @@ func overviewPhoneMode(mode string) string {
 		return "cellular"
 	case "volte":
 		return "volte"
+	case "modem_voice":
+		return "modem_voice"
 	default:
 		return "wifi"
 	}
@@ -407,6 +409,7 @@ type deviceMgmtOverviewLiteItem struct {
 	VoWiFiRuntime          *voWiFiRuntimeDTO                 `json:"vowifi_runtime,omitempty"`
 	VoWiFiHealth           *device.WiFiCallingHealthSnapshot `json:"vowifi_health,omitempty"`
 	NativeVoLTE            volte.Status                      `json:"native_volte,omitempty"`
+	ModemVoice             map[string]interface{}            `json:"modem_voice,omitempty"`
 	RadioLiveOK            *bool                             `json:"radio_live_ok,omitempty"`
 	Modem                  modem.DeviceStatus                `json:"modem"`
 	Traffic                map[string]string                 `json:"traffic,omitempty"`
@@ -435,30 +438,33 @@ type deviceMgmtListModem struct {
 }
 
 type deviceMgmtListItem struct {
-	ID                     string              `json:"id"`
-	Name                   string              `json:"name"`
-	Running                bool                `json:"running"`
-	Healthy                bool                `json:"healthy"`
-	ControlOnline          bool                `json:"control_online"`
-	PhysicalPresent        bool                `json:"physical_present"`
-	WorkerRunning          bool                `json:"worker_running"`
-	DataConnected          bool                `json:"data_connected"`
-	RadioRegistered        bool                `json:"radio_registered"`
-	LifecyclePhase         string              `json:"lifecycle_phase"`
-	LifecycleReason        string              `json:"lifecycle_reason,omitempty"`
-	PublicIP               string              `json:"public_ip"`
-	PublicIPv6             string              `json:"public_ipv6,omitempty"`
-	Interface              string              `json:"interface,omitempty"`
-	ESIMTransport          string              `json:"esim_transport,omitempty"`
-	SMSEnabled             bool                `json:"sms_enabled"`
-	NetworkEnabled         bool                `json:"network_enabled"`
-	PhoneMode              string              `json:"phone_mode,omitempty"`
-	VoWiFiEnabled          bool                `json:"vowifi_enabled"`
-	VoWiFiRuntime          *voWiFiRuntimeDTO   `json:"vowifi_runtime,omitempty"`
-	NativeVoLTE            *volte.Status       `json:"native_volte,omitempty"`
-	Modem                  deviceMgmtListModem `json:"modem"`
-	NetworkConnected       bool                `json:"network_connected"`
-	RegistrationStateLabel string              `json:"registration_state_label"`
+	ID                     string                            `json:"id"`
+	Name                   string                            `json:"name"`
+	Running                bool                              `json:"running"`
+	Healthy                bool                              `json:"healthy"`
+	ControlOnline          bool                              `json:"control_online"`
+	PhysicalPresent        bool                              `json:"physical_present"`
+	WorkerRunning          bool                              `json:"worker_running"`
+	DataConnected          bool                              `json:"data_connected"`
+	RadioRegistered        bool                              `json:"radio_registered"`
+	LifecyclePhase         string                            `json:"lifecycle_phase"`
+	LifecycleReason        string                            `json:"lifecycle_reason,omitempty"`
+	PublicIP               string                            `json:"public_ip"`
+	PublicIPv6             string                            `json:"public_ipv6,omitempty"`
+	Interface              string                            `json:"interface,omitempty"`
+	ESIMTransport          string                            `json:"esim_transport,omitempty"`
+	SMSEnabled             bool                              `json:"sms_enabled"`
+	NetworkEnabled         bool                              `json:"network_enabled"`
+	PhoneMode              string                            `json:"phone_mode,omitempty"`
+	VoWiFiEnabled          bool                              `json:"vowifi_enabled"`
+	VoWiFiActive           bool                              `json:"vowifi_active"`
+	VoWiFiRuntime          *voWiFiRuntimeDTO                 `json:"vowifi_runtime,omitempty"`
+	VoWiFiHealth           *device.WiFiCallingHealthSnapshot `json:"vowifi_health,omitempty"`
+	NativeVoLTE            *volte.Status                     `json:"native_volte,omitempty"`
+	ModemVoice             map[string]interface{}            `json:"modem_voice,omitempty"`
+	Modem                  deviceMgmtListModem               `json:"modem"`
+	NetworkConnected       bool                              `json:"network_connected"`
+	RegistrationStateLabel string                            `json:"registration_state_label"`
 }
 
 type voWiFiRuntimeDTO struct {
@@ -473,6 +479,7 @@ type voWiFiRuntimeDTO struct {
 	IMSReady           bool      `json:"ims_ready"`
 	SMSReady           bool      `json:"sms_ready"`
 	SMSMOReady         bool      `json:"sms_mo_ready"`
+	SMSRXPending       bool      `json:"sms_rx_pending"`
 	SMSReadyReason     string    `json:"sms_ready_reason,omitempty"`
 	RegStatus          int       `json:"reg_status"`
 	RegStatusText      string    `json:"reg_status_text"`
@@ -502,6 +509,7 @@ func runtimeStateToDTO(st runtimehost.State, status modem.DeviceStatus) *voWiFiR
 		IMSReady:       st.IMSReady,
 		SMSReady:       st.SMSReady,
 		SMSMOReady:     st.SMSMOReady,
+		SMSRXPending:   st.SMSRXPending,
 		SMSReadyReason: st.SMSReadyReason,
 		RegStatus:      st.RegStatus,
 		RegStatusText:  st.RegStatusText,
@@ -678,6 +686,7 @@ func (s *Server) buildOverviewLiteItemFromWorkerWithModem(w *device.Worker, cfg 
 		VoWiFiRuntime:          s.getVoWiFiRuntimeDTO(w.ID),
 		VoWiFiHealth:           s.getWiFiCallingHealth(w.ID),
 		NativeVoLTE:            s.pool.NativeVoLTEStatus(w.ID),
+		ModemVoice:             s.pool.ModemVoiceStatus(w.ID),
 		RadioLiveOK:            radioLiveOK,
 		Modem:                  modemStatus,
 		NetworkConnected:       w.NetworkConnected(),
@@ -786,7 +795,7 @@ func overviewLocalPhone(imsi, iccid string) string {
 	if imsi == "" && iccid == "" {
 		return ""
 	}
-	phone, err := db.GetPhoneNumberByIMSIOrICCID(imsi, iccid)
+	phone, err := db.GetPhoneNumberForSMSIdentity(db.SMSIdentity{ICCID: iccid, IMSI: imsi})
 	if err != nil {
 		logger.Error("读取设备本机号码失败", "err", err)
 		return ""
@@ -826,7 +835,9 @@ func (s *Server) handleDeviceMgmtList(c *gin.Context) {
 			NetworkEnabled:         cfg.NetworkEnabled,
 			PhoneMode:              overviewPhoneMode(cfg.PhoneMode),
 			VoWiFiEnabled:          cfg.VoWiFiEnabled,
+			VoWiFiActive:           s.pool.IsVoWiFiActive(w.ID),
 			VoWiFiRuntime:          s.getVoWiFiRuntimeDTO(w.ID),
+			VoWiFiHealth:           s.getWiFiCallingHealth(w.ID),
 			NetworkConnected:       w.NetworkConnected(),
 			RegistrationStateLabel: registrationStateLabel(status.RegStatus),
 			Modem: deviceMgmtListModem{
@@ -850,6 +861,7 @@ func (s *Server) handleDeviceMgmtList(c *gin.Context) {
 			volteStatus := s.pool.NativeVoLTEStatus(w.ID)
 			item.NativeVoLTE = &volteStatus
 		}
+		item.ModemVoice = s.pool.ModemVoiceStatus(w.ID)
 		s.applyLifecycleToListItem(&item, true, cfg)
 		items = append(items, item)
 	}
@@ -871,6 +883,8 @@ func (s *Server) handleDeviceMgmtList(c *gin.Context) {
 			NetworkEnabled:         dc.NetworkEnabled,
 			PhoneMode:              overviewPhoneMode(dc.PhoneMode),
 			VoWiFiEnabled:          false, // 非运行设备无活跃 VoWiFi
+			VoWiFiActive:           false,
+			VoWiFiHealth:           s.getWiFiCallingHealth(dc.ID),
 			NetworkConnected:       false,
 			RegistrationStateLabel: registrationStateLabel(0),
 			Modem:                  deviceMgmtListModem{},
@@ -1651,22 +1665,11 @@ func (s *Server) handleDeviceMgmtUpdateDevice(c *gin.Context) {
 }
 
 func (s *Server) handleDeviceMgmtDeleteDevice(c *gin.Context) {
-	id := deviceIDParam(c)
-	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "必须填写 id"})
-		return
-	}
-
+	var abandon func(string) error
 	if s.pool != nil {
-		s.pool.AbandonDevice(id)
+		abandon = s.pool.AbandonDevice
 	}
-
-	if err := config.DeleteDeviceInFile(s.configPath, id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "删除设备配置失败: " + err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	deleteManagedDevice(c, s.configPath, databaseManagedDeviceDeleteOps(abandon))
 }
 
 type addDeviceRequest struct {
@@ -1716,7 +1719,9 @@ func (s *Server) handleDeviceMgmtAddDevice(c *gin.Context) {
 		return
 	}
 	if s.pool != nil {
-		s.pool.AbandonDevice(newCfg.ID)
+		if !stopManagedDevice(c, newCfg.ID, s.pool.AbandonDevice) {
+			return
+		}
 	}
 	if conflict := detectDeviceBindingConflict(newCfg, ""); conflict != nil {
 		c.JSON(http.StatusConflict, gin.H{
@@ -1789,23 +1794,6 @@ var openManualATSession = func(port string) (manualATSession, error) {
 	return modem.NewSerialAT(port, 115200, 8, 1, "N")
 }
 
-func executeManualATOnPort(port, cmd string, timeout time.Duration) (string, error) {
-	port = strings.TrimSpace(port)
-	if port == "" {
-		return "", fmt.Errorf("当前设备没有可用 AT 端口")
-	}
-	session, err := openManualATSession(port)
-	if err != nil {
-		return "", fmt.Errorf("打开 AT 端口 %s 失败: %w", port, err)
-	}
-	defer session.Close()
-	return session.Execute(cmd, timeout)
-}
-
-func manualATPortForWorker(worker *device.Worker) string {
-	return worker.ResolvedATPort()
-}
-
 func (s *Server) handleDeviceMgmtExecuteAT(c *gin.Context) {
 	id := deviceIDParam(c)
 	var req executeATRequest
@@ -1837,38 +1825,16 @@ func (s *Server) handleDeviceMgmtExecuteAT(c *gin.Context) {
 		timeout = 60 * time.Second
 	}
 
-	if worker.Backend != nil && isTransientATBackend(worker.Backend.Mode()) {
-		resp, err := executeManualATOnPort(manualATPortForWorker(worker), cmd, timeout)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": err.Error()})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"status": "ok", "response": resp})
-		return
-	}
-
-	if worker.Modem == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "当前设备没有可用 AT 管理器"})
-		return
-	}
-	if !worker.Modem.HasATPort() {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "当前设备没有可用 AT 端口"})
-		return
-	}
-	if !worker.Modem.CanExecuteAT() {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "AT 管理器未启动或不可用"})
-		return
-	}
-	resp, err := worker.Modem.ExecuteAT(cmd, timeout)
+	resp, err := s.pool.ExecuteATContext(c.Request.Context(), device.ATRequest{DeviceID: id, Command: cmd, Timeout: timeout})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": err.Error()})
+		status := http.StatusInternalServerError
+		if errors.Is(err, device.ErrATUnavailable) {
+			status = http.StatusBadRequest
+		}
+		c.JSON(status, gin.H{"status": "error", "message": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "response": resp})
-}
-
-func isTransientATBackend(mode string) bool {
-	return mode == backend.BackendQMI
 }
 
 type setUSBNetModeRequest struct {

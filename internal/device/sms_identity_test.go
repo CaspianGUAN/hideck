@@ -4,6 +4,9 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/yibaiba/hideck/internal/backend"
+	"github.com/yibaiba/hideck/internal/db"
 )
 
 type smsIdentityStoreStub struct {
@@ -18,11 +21,15 @@ type savedInboundSMS struct {
 	message  inboundSMSRecord
 }
 
-func (s *smsIdentityStoreStub) LookupDeviceIdentity(deviceID string) (SMSIdentity, bool, error) {
+func (s *smsIdentityStoreStub) LookupDeviceIdentity(selector db.SMSDeviceSelector) (SMSIdentity, bool, error) {
 	if s.lookupErr != nil {
 		return SMSIdentity{}, false, s.lookupErr
 	}
-	identity, ok := s.identities[deviceID]
+	key := selector.DeviceID
+	if selector.IMEI != "" {
+		key = selector.IMEI
+	}
+	identity, ok := s.identities[key]
 	return identity, ok, nil
 }
 
@@ -80,8 +87,8 @@ func TestResolveSMSIdentityRejectsSIMSwapConflict(t *testing.T) {
 
 func TestProcessSMSSameHistoricalIMSIKeepsDeviceICCID(t *testing.T) {
 	store := &smsIdentityStoreStub{identities: map[string]SMSIdentity{
-		"dev-a": {ICCID: "card-a", IMSI: "shared-imsi"},
-		"dev-b": {ICCID: "card-b", IMSI: "shared-imsi"},
+		"dev-a": {ICCID: "898600123456f7890123", IMSI: "shared-imsi"},
+		"dev-b": {ICCID: "898600123457f7890123", IMSI: "shared-imsi"},
 	}}
 	pool := &Pool{workers: make(map[string]*Worker), smsIdentities: store}
 	for _, deviceID := range []string{"dev-a", "dev-b"} {
@@ -92,41 +99,64 @@ func TestProcessSMSSameHistoricalIMSIKeepsDeviceICCID(t *testing.T) {
 			t.Fatalf("%s processSMS() error=%v", deviceID, err)
 		}
 	}
-	if len(store.saved) != 2 || store.saved[0].identity.ICCID != "CARD-A" || store.saved[1].identity.ICCID != "CARD-B" {
+	if len(store.saved) != 2 || store.saved[0].identity.ICCID != "898600123456F7890123" || store.saved[1].identity.ICCID != "898600123457F7890123" {
 		t.Fatalf("saved identities=%+v", store.saved)
 	}
 }
 
-// Every modem plugged into the same slot shares the interface-name device ID
-// as alias; the binding of the modem attached now must win over an older
-// modem's binding found through the alias.
-func TestResolveSMSIdentityPrefersAttachedModemBinding(t *testing.T) {
-	pool, store := smsTestPool("dev-1", SMSIdentity{ICCID: "old-modem-card", IMSI: "old-imsi"})
-	store.identities["imei-current"] = SMSIdentity{ICCID: "current-card", IMSI: "current-imsi"}
-	worker := &Worker{ID: "dev-1", Pool: pool}
-	setWorkerSMSIdentity(worker, SMSIdentity{ICCID: "current-card", IMSI: "current-imsi"})
-	worker.state.Identity.IMEI = "imei-current"
-	pool.workers[worker.ID] = worker
-
-	identity, err := pool.ResolveSMSIdentity(worker.ID)
-
-	if err != nil {
-		t.Fatalf("ResolveSMSIdentity() error=%v, want the attached modem's binding", err)
-	}
-	if identity.ICCID != "CURRENT-CARD" {
-		t.Fatalf("identity=%+v", identity)
+func TestResolveSMSIdentityPinsRuntimeIMEI(t *testing.T) {
+	for _, persisted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "not persisted", true: "persisted"}[persisted], func(t *testing.T) {
+			pool, store := smsTestPool("reused", SMSIdentity{ICCID: "OLD", IMSI: "old-imsi"})
+			current := SMSIdentity{ICCID: "NEW", IMSI: "new-imsi"}
+			if persisted {
+				store.identities["current-imei"] = current
+			}
+			worker := &Worker{ID: "reused", Pool: pool}
+			worker.Config.ModemIMEI = "old-configured-imei"
+			setWorkerSMSIdentity(worker, current)
+			worker.state.Identity.IMEI = "current-imei"
+			pool.workers[worker.ID] = worker
+			got, err := pool.ResolveSMSIdentity(worker.ID)
+			if err != nil || got != current {
+				t.Fatalf("identity=%+v err=%v", got, err)
+			}
+			if err := worker.processSMS("10086", "current modem", time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			if len(store.saved) != 1 || store.saved[0].identity != current {
+				t.Fatalf("saved=%+v", store.saved)
+			}
+		})
 	}
 }
 
-func TestResolveSMSIdentityStillRejectsSIMSwapOnAttachedModem(t *testing.T) {
-	pool, store := smsTestPool("dev-1", SMSIdentity{ICCID: "unused"})
-	store.identities["imei-current"] = SMSIdentity{ICCID: "previous-card", IMSI: "previous-imsi"}
-	worker := &Worker{ID: "dev-1", Pool: pool}
-	setWorkerSMSIdentity(worker, SMSIdentity{ICCID: "swapped-card", IMSI: "swapped-imsi"})
-	worker.state.Identity.IMEI = "imei-current"
+func TestResolveSMSIdentityRetainsPhysicalModemConflictChecks(t *testing.T) {
+	pool, store := smsTestPool("reused", SMSIdentity{})
+	store.identities["current-imei"] = SMSIdentity{ICCID: "OLD", IMSI: "old-imsi"}
+	worker := &Worker{ID: "reused", Pool: pool}
+	setWorkerSMSIdentity(worker, SMSIdentity{ICCID: "NEW", IMSI: "new-imsi"})
+	worker.state.Identity.IMEI = "current-imei"
 	pool.workers[worker.ID] = worker
-
 	if _, err := pool.ResolveSMSIdentity(worker.ID); !errors.Is(err, ErrSMSIdentityConflict) {
-		t.Fatalf("ResolveSMSIdentity() error=%v, want conflict for a real SIM swap", err)
+		t.Fatalf("same physical modem conflict=%v", err)
+	}
+	worker.state.Identity.Phase = simIdentityPhaseTransitioning
+	if _, err := pool.ResolveSMSIdentity(worker.ID); !errors.Is(err, ErrSMSIdentityTransitioning) {
+		t.Fatalf("transition error=%v", err)
+	}
+}
+
+func TestResolveSMSIdentityPCSCDoesNotUseStaleModemIMEI(t *testing.T) {
+	pool, store := smsTestPool("reader", SMSIdentity{ICCID: "READER-CARD", IMSI: "reader-imsi"})
+	store.identities["stale-imei"] = SMSIdentity{ICCID: "MODEM-CARD", IMSI: "modem-imsi"}
+	worker := &Worker{ID: "reader", Pool: pool, Backend: &pcscDeviceBackend{}}
+	worker.Config.DeviceBackend = backend.BackendPCSC
+	worker.state.Identity.IMEI = "stale-imei"
+	setWorkerSMSIdentity(worker, store.identities["reader"])
+	pool.workers[worker.ID] = worker
+	got, err := pool.ResolveSMSIdentity(worker.ID)
+	if err != nil || got != store.identities["reader"] {
+		t.Fatalf("PCSC identity=%+v err=%v", got, err)
 	}
 }

@@ -72,3 +72,28 @@ test('create service preserves a saved proxy warning response', async () => {
     api.post = originalPost
   }
 })
+
+test('probe service preserves both observations from a diagnostic 502', async () => {
+  const originalPost = api.post
+  const data = { status: 'error', message: 'UDP timeout', result: {
+    udp_relay_ok: false, egress: { reachable: true, ip: '203.0.113.1', country_code: 'GB' }
+  } }
+  api.post = (async () => { throw { isAxiosError: true, response: { status: 502, data } } }) as typeof api.post
+  try {
+    const result = await upstreamProxyService.probe('route')
+    assert.equal(result.ok, true)
+    if (result.ok) {
+      assert.equal(result.data.status, 'error')
+      assert.equal(result.data.result.udp_relay_ok, false)
+      assert.equal(result.data.result.egress?.country_code, 'GB')
+    }
+  } finally { api.post = originalPost }
+})
+
+test('an unrelated gateway 502 remains a request failure', async () => {
+  const originalPost = api.post
+  api.post = (async () => { throw { isAxiosError: true, message: 'Bad Gateway', response: { status: 502, data: '<html>Bad Gateway</html>' } } }) as typeof api.post
+  try {
+    assert.equal((await upstreamProxyService.probe('route')).ok, false)
+  } finally { api.post = originalPost }
+})

@@ -4,6 +4,7 @@ import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useSettingsStore } from '../stores/settings'
 import { useAuthStore } from '../stores/auth'
+import { useDevicesStore } from '../stores/devices'
 import type { PasswordCredentialStatus } from '../types/credentials'
 import WorkspaceStage from '../components/WorkspaceStage.vue'
 import FieldRow from '../components/FieldRow.vue'
@@ -27,11 +28,24 @@ import { t, useLocale } from '../i18n'
 import type { AppLocale } from '../utils/locale'
 
 const settingsStore = useSettingsStore()
+const devicesStore = useDevicesStore()
 const authStore = useAuthStore()
 const { isClassic, applyClassic, restoreNavyTheme } = useTheme()
 const { locale, setLocale } = useLocale()
 const { systemInfo, loadingNotifications, savingNotifications, testingWebhook, testingBark, testingEmail, testingWeCom, changingPassword, passwordForm, telegramForm, feishuForm, qqForm, weixinForm, weComBotForm, webhookSettings, barkSettings, emailForm, pushplusForm, weComSettings } = storeToRefs(settingsStore)
 const activeNotifyTab = ref('telegram')
+const notifyChannelLabels: Record<string, string> = {
+  telegram: 'Telegram Bot', feishu: '飞书 Bot', weixin: '个人微信', 'wecom-bot': '企微机器人', qq: 'QQ Bot',
+  bark: 'Bark', email: 'Email', pushplus: 'Pushplus', webhook: 'Webhook', wecom: '企微 Webhook',
+}
+// The WeCom Bot tab id differs from its config key.
+const notifyFilterKey = computed(() => (activeNotifyTab.value === 'wecom-bot' ? 'wecom_bot' : activeNotifyTab.value))
+const notifyDeviceFilter = computed<string[]>({
+  get: () => settingsStore.deviceFilters[notifyFilterKey.value] || [],
+  set: (devices) => {
+    settingsStore.deviceFilters = { ...settingsStore.deviceFilters, [notifyFilterKey.value]: devices }
+  },
+})
 const openWRTDynamicInterfaces = ref(false)
 const loadingSystemSettings = ref(false)
 const savingSystemSettings = ref(false)
@@ -442,6 +456,7 @@ function showUpdateInstructions() {
 
 onMounted(() => {
   loadNotifications()
+  if (devicesStore.list.length === 0) void devicesStore.fetchList()
   loadSystemInfo()
   loadSystemSettings()
   loadRecordingSettings()
@@ -954,7 +969,7 @@ onMounted(() => {
                       placeholder="{{device_label}} {{text}}"
                     />
                     <div class="text-[10px] text-[var(--ui-muted)] mt-1">
-                      支持占位符：<code v-pre>{{text}}</code>、<code v-pre>{{event}}</code>、<code v-pre>{{timestamp}}</code>、<code v-pre>{{device_id}}</code>、<code v-pre>{{device_name}}</code>、<code v-pre>{{device_label}}</code>。留空则直接发送原始 text。
+                      支持占位符：<code v-pre>{{text}}</code>、<code v-pre>{{event}}</code>、<code v-pre>{{timestamp}}</code>、<code v-pre>{{device_id}}</code>、<code v-pre>{{device_name}}</code>、<code v-pre>{{device_label}}</code>、<code v-pre>{{local_number}}</code>（收到短信的本机号码，无号码时为 ICCID 尾号）。留空则直接发送原始 text。
                     </div>
                   </div>
                   
@@ -1033,12 +1048,26 @@ onMounted(() => {
                       class="wecom-template-input"
                     />
                     <div class="text-[10px] text-[var(--ui-muted)] mt-1">
-                      变量需直接作为 JSON 值使用。支持 <code v-pre>{{event}}</code>、<code v-pre>{{title}}</code>、<code v-pre>{{message}}</code>、<code v-pre>{{timestamp}}</code>、<code v-pre>{{content}}</code>、<code v-pre>{{number}}</code>、<code v-pre>{{device_id}}</code>、<code v-pre>{{device_name}}</code>、<code v-pre>{{device_label}}</code>、<code v-pre>{{time}}</code>。
+                      变量需直接作为 JSON 值使用。支持 <code v-pre>{{event}}</code>、<code v-pre>{{title}}</code>、<code v-pre>{{message}}</code>、<code v-pre>{{timestamp}}</code>、<code v-pre>{{content}}</code>、<code v-pre>{{number}}</code>、<code v-pre>{{local_number}}</code>、<code v-pre>{{device_id}}</code>、<code v-pre>{{device_name}}</code>、<code v-pre>{{device_label}}</code>、<code v-pre>{{time}}</code>。
                     </div>
                   </div>
                 </div>
               </el-tab-pane>
             </el-tabs>
+            <div class="mt-4 space-y-2">
+              <label class="text-xs font-bold text-[var(--ui-muted)] uppercase tracking-wider">{{ notifyChannelLabels[activeNotifyTab] || activeNotifyTab }} 只推送这些设备</label>
+              <el-select
+                v-model="notifyDeviceFilter"
+                multiple
+                clearable
+                filterable
+                class="w-full"
+                placeholder="全部设备"
+              >
+                <el-option v-for="device in devicesStore.list" :key="device.id" :label="device.name || device.id" :value="device.id" />
+              </el-select>
+              <div class="text-[10px] text-[var(--ui-muted)]">只作用于当前渠道的短信和来电通知；留空推送全部设备，其他系统通知不受影响。</div>
+            </div>
          </div>
       </section>
     </div>

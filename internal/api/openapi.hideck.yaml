@@ -39,6 +39,174 @@ tags:
   - name: phone
     description: VoWiFi 浏览器实时电话、媒体、事件与录音
 paths:
+  /mbn/files:
+    get:
+      tags: [devices]
+      summary: 列出 MBN 文件库
+      responses:
+        '200': { description: '请求成功' }
+        '400': { description: '请求无效或模组明确拒绝，响应包含 error' }
+        '401': { description: '未认证' }
+        '409': { description: '设备忙、身份变化、幂等冲突或仍有引用' }
+    post:
+      tags: [devices]
+      summary: 保存原始 MBN 文件（不导入模组）
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                model: { type: string }
+                firmware: { type: string }
+                source: { type: string }
+      responses:
+        '201': { description: '请求成功' }
+        '400': { description: '请求无效或模组明确拒绝，响应包含 error' }
+        '401': { description: '未认证' }
+        '409': { description: '设备忙、身份变化、幂等冲突或仍有引用' }
+  /mbn/files/{file_id}:
+    parameters:
+      - in: path
+        name: file_id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [devices]
+      summary: 下载原始 MBN 文件
+      responses:
+        '200': { description: '请求成功' }
+        '400': { description: '请求无效或模组明确拒绝，响应包含 error' }
+        '401': { description: '未认证' }
+        '409': { description: '设备忙、身份变化、幂等冲突或仍有引用' }
+    delete:
+      tags: [devices]
+      summary: 删除未被策略或操作引用的文件
+      responses:
+        '204': { description: '请求成功' }
+        '400': { description: '请求无效或模组明确拒绝，响应包含 error' }
+        '401': { description: '未认证' }
+        '409': { description: '设备忙、身份变化、幂等冲突或仍有引用' }
+  /devices/{device_id}/mbn:
+    parameters:
+      - in: path
+        name: device_id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [devices]
+      summary: 只读查询 MBN 实际能力、AutoSel 和配置列表
+      responses:
+        '200': { description: '请求成功' }
+        '400': { description: '请求无效或模组明确拒绝，响应包含 error' }
+        '401': { description: '未认证' }
+        '409': { description: '设备忙、身份变化、幂等冲突或仍有引用' }
+  /devices/{device_id}/mbn/operations:
+    parameters:
+      - in: path
+        name: device_id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [devices]
+      summary: 查询持久化 MBN 操作记录
+      responses:
+        '200': { description: '请求成功' }
+        '400': { description: '请求无效或模组明确拒绝，响应包含 error' }
+        '401': { description: '未认证' }
+        '409': { description: '设备忙、身份变化、幂等冲突或仍有引用' }
+    post:
+      tags: [devices]
+      summary: 创建幂等 MBN 操作（异步）
+      description: |
+        kind 为 apply/import/delete/trial/restore。request_id 重复且内容相同返回原任务；内容不同返回 409。
+        expected_owner 必须来自最近一次 MBN 查询，包含 device_id/imei/iccid/generation/identity_generation。
+        apply 使用 profile/autosel；import 使用 asset_id 和 accept_unknown_compatibility。
+        delete 需要 confirm_name 等于 profile、accept_no_backup=true，使用中的配置还需 replacement。
+        trial 指定有序 candidates、goal（registration/data/ims）、target_plmn 及三个秒数配置。
+        data 需要 allow_data 和 probe_url；ims 需要 allow_native_ims。restore 指定 restore_operation。
+        默认恢复/驻网/稳定窗口分别 180/120/30 秒。202 不是成功，需读取记录终态。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [request_id, kind, expected_owner]
+              properties:
+                request_id: { type: string }
+                kind: { type: string, enum: [apply, import, delete, trial, restore] }
+                expected_owner: { type: object }
+                profile: { type: string }
+                autosel: { type: boolean }
+                asset_id: { type: string }
+                candidates: { type: array, items: { type: string } }
+                goal: { type: string, enum: [registration, data, ims] }
+                restore_operation: { type: string }
+      responses:
+        '202': { description: '已受理，请查询操作记录，不能视为执行成功' }
+        '400': { description: '请求无效或模组明确拒绝，响应包含 error' }
+        '401': { description: '未认证' }
+        '409': { description: '设备忙、身份变化、幂等冲突或仍有引用' }
+  /devices/{device_id}/mbn/operations/{operation_id}/cancel:
+    parameters:
+      - in: path
+        name: device_id
+        required: true
+        schema: { type: string }
+      - in: path
+        name: operation_id
+        required: true
+        schema: { type: string }
+    post:
+      tags: [devices]
+      summary: 请求在安全边界取消任务
+      responses:
+        '202': { description: '已受理，请查询操作记录，不能视为执行成功' }
+        '400': { description: '请求无效或模组明确拒绝，响应包含 error' }
+        '401': { description: '未认证' }
+        '409': { description: '设备忙、身份变化、幂等冲突或仍有引用' }
+  /devices/{device_id}/mbn/policies:
+    parameters:
+      - in: path
+        name: device_id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [devices]
+      summary: 查询当前模组和 SIM 的 MBN 策略
+      responses:
+        '200': { description: '请求成功' }
+        '400': { description: '请求无效或模组明确拒绝，响应包含 error' }
+        '401': { description: '未认证' }
+        '409': { description: '设备忙、身份变化、幂等冲突或仍有引用' }
+    put:
+      tags: [devices]
+      summary: 保存当前模组或 SIM 的 MBN 策略
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, mode]
+              properties:
+                key: { type: string, description: 'sim:ICCID 或 device:IMEI，仅当前设备身份' }
+                mode: { type: string, enum: [inherit, autosel, fixed] }
+                model: { type: string }
+                firmware: { type: string }
+                profile: { type: string }
+                version: { type: string }
+                asset_id: { type: string }
+                allow_import: { type: boolean }
+      responses:
+        '200': { description: '请求成功' }
+        '400': { description: '请求无效或模组明确拒绝，响应包含 error' }
+        '401': { description: '未认证' }
+        '409': { description: '设备忙、身份变化、幂等冲突或仍有引用' }
   /docs:
     get:
       tags: [settings]
@@ -241,7 +409,7 @@ paths:
               $ref: '#/components/schemas/SMSSendRequest'
       responses:
         '200':
-          description: 发送成功
+          description: 已提交到短信发送通道，不代表收件手机已收到
           content:
             application/json:
               schema:
@@ -309,6 +477,44 @@ paths:
                   latest:
                     type: object
                     description: 最新一条新增未读短信，字段与短信会话中的短信记录一致
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '401':
+          $ref: '#/components/responses/ErrorMessage'
+        '500':
+          $ref: '#/components/responses/ErrorMessage'
+
+  /sms/events:
+    get:
+      tags: [sms]
+      summary: 订阅短信来信 SSE 事件流
+      description: |
+        使用 Last-Event-ID 或 after_id 按入库 ID 补发仍未读的来信；省略游标时不重放旧短信，只推送连接之后的新来信。
+        补发会逐页发送到连接建立时确定的截止 ID，再发送期间排队的实时事件，不限制补发总条数。
+        每条事件 `event` 为 `sms_received`，`id` 为短信 ID，`data` 字段与 `/sms/notifications` 的 `latest` 一致。
+        分段短信补齐时会使用相同 ID 再次推送，客户端应按 ID 更新内容，不应仅按 ID 丢弃事件。
+        游标是短信入库 ID，不是内容版本；断线期间旧 ID 的内容更新不在补发范围内，应重新查询会话同步。
+        发送短信不进入此流。不会修改已读状态。
+      parameters:
+        - in: header
+          name: Last-Event-ID
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 9007199254740991
+        - in: query
+          name: after_id
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 9007199254740991
+      responses:
+        '200':
+          description: text/event-stream，事件 data 为 SMSMessage JSON
+          content:
+            text/event-stream:
+              schema:
+                type: string
         '400':
           $ref: '#/components/responses/ErrorMessage'
         '401':
@@ -2968,6 +3174,30 @@ paths:
         '503':
           $ref: '#/components/responses/PhoneError'
 
+  /phone/media/{media_id}:
+    delete:
+      tags: [phone]
+      summary: 释放尚未绑定电话的 WebRTC 媒体会话
+      description: 浏览器媒体连接建立失败时使用；已经绑定或正在用于电话操作的媒体不能通过该接口释放。
+      parameters:
+        - name: media_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/PhoneLease'
+      responses:
+        '204':
+          description: 媒体会话已释放
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/PhoneError'
+        '404':
+          $ref: '#/components/responses/PhoneError'
+        '409':
+          $ref: '#/components/responses/PhoneError'
+
   /phone/calls:
     post:
       tags: [phone]
@@ -4178,6 +4408,9 @@ components:
           description: IMS 短信发送前置条件是否就绪；不依赖用于下行短信的 port-s 接收连接。
         sms_ready_reason:
           type: string
+        sms_rx_pending:
+          type: boolean
+          description: IMS 已注册但尚无接收路径证据；不等同于故障或已验证可用。
         reg_status:
           type: integer
         reg_status_text:
@@ -4212,7 +4445,7 @@ components:
       properties:
         state:
           type: string
-          enum: [checking, healthy, recovering, unavailable, stopped]
+          enum: [checking, pending, healthy, recovering, unavailable, stopped]
         started_at:
           type: string
           format: date-time
@@ -4232,7 +4465,7 @@ components:
           enum: [started, interrupted, recovered, failed, stopped]
         state:
           type: string
-          enum: [checking, healthy, recovering, unavailable, stopped]
+          enum: [checking, pending, healthy, recovering, unavailable, stopped]
         at:
           type: string
           format: date-time
@@ -4244,7 +4477,7 @@ components:
       properties:
         state:
           type: string
-          enum: [checking, healthy, recovering, unavailable, stopped]
+          enum: [checking, pending, healthy, recovering, unavailable, stopped]
         active:
           type: boolean
         measured:
@@ -4435,6 +4668,7 @@ components:
           type: string
         vowifi_active:
           type: boolean
+          description: VoWiFi 运行实例是否存在，不代表 IMS 已注册或短信通道已就绪；具体状态请查看 vowifi_runtime 和 vowifi_health。
         vowifi_runtime:
           $ref: '#/components/schemas/VoWiFiRuntime'
         vowifi_health:
@@ -4601,12 +4835,16 @@ components:
           type: string
         phone:
           type: string
+        destination:
+          type: string
+          description: 实际提交的收件地址，可能按发送 SIM 归属地区转为国际号码
         message_id:
           type: string
         parts_total:
           type: integer
         delivery_state:
           type: string
+          description: 通道发送状态；acked 仅表示发送端已受理，不保证收件手机已收到
 
     SMSDeliveryResponse:
       type: object
@@ -4824,6 +5062,15 @@ components:
           $ref: '#/components/schemas/WeComBotSettings'
         wecom:
           $ref: '#/components/schemas/WeComSettings'
+        device_filters:
+          type: object
+          description: 按渠道名列出只接收其短信和来电通知的设备 ID；没有条目或清单为空的渠道推送全部设备。保存时省略该字段则保留已保存的清单，未知渠道名返回 400。
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          example:
+            telegram: [modem-1]
 
     UpdateNotificationSettingsRequest:
       allOf:
@@ -5170,8 +5417,13 @@ components:
           type: boolean
         vowifi_enabled:
           type: boolean
+        vowifi_active:
+          type: boolean
+          description: VoWiFi 运行实例是否存在，不代表 IMS 已注册或短信通道已就绪；具体状态请查看 vowifi_runtime 和 vowifi_health。
         vowifi_runtime:
           $ref: '#/components/schemas/VoWiFiRuntime'
+        vowifi_health:
+          $ref: '#/components/schemas/WiFiCallingHealth'
         modem:
           $ref: '#/components/schemas/DeviceMgmtListModem'
         network_connected:
@@ -5215,6 +5467,7 @@ components:
           type: boolean
         vowifi_active:
           type: boolean
+          description: VoWiFi 运行实例是否存在，不代表 IMS 已注册或短信通道已就绪；具体状态请查看 vowifi_runtime 和 vowifi_health。
         vowifi_runtime:
           $ref: '#/components/schemas/VoWiFiRuntime'
         vowifi_health:

@@ -10,7 +10,7 @@ export function isNativeVoLTEMode(mode?: string | null): boolean {
 
 export function phoneModeCampsOnCell(mode?: string | null): boolean {
   const value = normalizePhoneMode(mode)
-  return value === 'cellular' || value === 'volte'
+  return value === 'cellular' || value === 'volte' || value === 'modem_voice'
 }
 
 export function isWifiCallingEnabled(mode?: string | null, phoneEnabled?: boolean): boolean {
@@ -23,7 +23,7 @@ export function deviceSupportsUt(device?: {
   vowifi_active?: boolean
   phone_mode?: string
 } | null): boolean {
-  if (!device || isNativeVoLTEMode(device.phone_mode)) return false
+  if (!device || isNativeVoLTEMode(device.phone_mode) || device.phone_mode === 'modem_voice') return false
   return device.vowifi_enabled === true || device.vowifi_active === true
 }
 
@@ -34,6 +34,7 @@ export function softwareIMSBlocked(device?: { software_ims_blocked?: boolean } |
 export function phoneModeLabel(mode?: string | null): string {
   const value = normalizePhoneMode(mode)
   if (value === 'volte') return 'VoLTE'
+  if (value === 'modem_voice') return '模组直拨'
   if (value === 'cellular') return '蜂窝数据'
   return 'WiFi calling'
 }

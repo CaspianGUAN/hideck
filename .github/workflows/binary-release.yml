@@ -151,7 +151,8 @@ jobs:
   build-openwrt:
     name: Build OpenWrt ${{ matrix.artifact_arch }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Up to 60 minutes of resumable download, plus extraction and compilation.
+    timeout-minutes: 80
     needs: frontend
     strategy:
       fail-fast: false
@@ -159,15 +160,15 @@ jobs:
         include:
           - goarch: amd64
             goarm: ''
-            musl_triple: ''
+            sdk_id: 24.10.8-x86-64
             artifact_arch: amd64
           - goarch: arm64
             goarm: ''
-            musl_triple: aarch64-linux-musl
+            sdk_id: 24.10.8-armsr-armv8
             artifact_arch: arm64
           - goarch: arm
             goarm: '7'
-            musl_triple: arm-linux-musleabihf
+            sdk_id: 24.10.8-mvebu-cortexa9
             artifact_arch: armv7
 
     steps:
@@ -193,30 +194,29 @@ jobs:
           echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
           echo "buildtime=${BUILDTIME}" >> "${GITHUB_OUTPUT}"
 
-      - name: Install musl toolchain
+      - name: Download verified OpenWrt SDK
+        id: sdk
+        uses: ./.github/actions/download-openwrt-sdk
+        with:
+          sdk-id: ${{ matrix.sdk_id }}
+
+      - name: Install pinned OpenWrt musl toolchain
+        env:
+          SDK_ARCHIVE: ${{ steps.sdk.outputs.archive }}
         shell: bash
         run: |
           set -euo pipefail
-          if [ -z "${{ matrix.musl_triple }}" ]; then
-            sudo apt-get update
-            sudo apt-get install -y musl-tools
-            echo "CC=musl-gcc" >> "${GITHUB_ENV}"
-            exit 0
+          sdk_dir="$RUNNER_TEMP/openwrt-sdk"
+          mkdir -p "$sdk_dir"
+          tar --zstd -xf "$SDK_ARCHIVE" -C "$sdk_dir" --strip-components=1
+          mapfile -t compilers < <(find "$sdk_dir/staging_dir" -path '*/bin/*-openwrt-linux-musl*-gcc' -print)
+          if [ "${#compilers[@]}" -ne 1 ]; then
+            printf 'expected one OpenWrt musl compiler, found %s\n' "${#compilers[@]}" >&2
+            printf '%s\n' "${compilers[@]}" >&2
+            exit 1
           fi
-          case "${{ matrix.goarch }}" in
-            arm64) zig_target=aarch64-linux-musl ;;
-            arm) zig_target=arm-linux-musleabihf ;;
-            *) echo "unsupported goarch ${{ matrix.goarch }}" >&2; exit 1 ;;
-          esac
-          curl -fsSL --connect-timeout 20 --max-time 120 --retry 3 --retry-delay 2 \
-            "https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz" \
-            | tar -C "$RUNNER_TEMP" -xJ
-          echo "$RUNNER_TEMP/zig-linux-x86_64-0.13.0" >> "${GITHUB_PATH}"
-          wrapper="$RUNNER_TEMP/musl-cc"
-          printf '#!/bin/sh\nexec "%s/zig-linux-x86_64-0.13.0/zig" cc -target %s "$@"\n' \
-            "$RUNNER_TEMP" "$zig_target" > "$wrapper"
-          chmod +x "$wrapper"
-          echo "CC=${wrapper}" >> "${GITHUB_ENV}"
+          echo "CC=${compilers[0]}" >> "${GITHUB_ENV}"
+          echo "STAGING_DIR=${sdk_dir}/staging_dir" >> "${GITHUB_ENV}"
 
       - name: Download frontend dist
         uses: actions/download-artifact@v4
@@ -238,16 +238,34 @@ jobs:
           BUILD_TIME="${{ steps.vars.outputs.buildtime }}" \
           GOARCH="${{ matrix.goarch }}" \
           GOARM="${{ matrix.goarm }}" \
-          OUT="dist/hideck" \
+          LINK_MODE=static \
+          OUT="dist/hideck-static" \
+          sh packaging/openwrt/build.sh
+
+      - name: Build OpenWrt dynamic binary
+        shell: bash
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}" \
+          BUILD_TIME="${{ steps.vars.outputs.buildtime }}" \
+          GOARCH="${{ matrix.goarch }}" \
+          GOARM="${{ matrix.goarm }}" \
+          LINK_MODE=dynamic \
+          OUT="dist/hideck-dynamic" \
           sh packaging/openwrt/build.sh
 
       - name: Package artifact
         shell: bash
         run: |
-          OUT="hideck_${{ steps.vars.outputs.version }}_openwrt_${{ matrix.artifact_arch }}"
+          STATIC_OUT="hideck_${{ steps.vars.outputs.version }}_openwrt_${{ matrix.artifact_arch }}"
+          DYNAMIC_OUT="hideck_${{ steps.vars.outputs.version }}_openwrt_dynamic_${{ matrix.artifact_arch }}"
           mkdir -p out
-          cp dist/hideck "out/${OUT}"
-          (cd out && sha256sum "${OUT}" > "${OUT}.sha256")
+          cp dist/hideck-static "out/${STATIC_OUT}"
+          cp dist/hideck-dynamic "out/${DYNAMIC_OUT}"
+          (
+            cd out
+            sha256sum "${STATIC_OUT}" > "${STATIC_OUT}.sha256"
+            sha256sum "${DYNAMIC_OUT}" > "${DYNAMIC_OUT}.sha256"
+          )
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -256,12 +274,19 @@ jobs:
           path: out/*
           retention-days: 3
 
+  openwrt-packages:
+    needs: build-openwrt
+    uses: ./.github/workflows/openwrt-packages.yml
+    with:
+      version: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version || 'dev' }}
+
   release:
     name: Publish release assets
     runs-on: ubuntu-latest
     needs:
       - build
       - build-openwrt
+      - openwrt-packages
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Prepare release vars

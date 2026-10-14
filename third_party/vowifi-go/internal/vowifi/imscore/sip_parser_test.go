@@ -9,6 +9,7 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/emiago/sipgo/sip"
 )
@@ -164,8 +165,8 @@ func TestParseSIPResponsePreservesStructuredHeaders(t *testing.T) {
 		!strings.Contains(contacts, "second@ims.example") {
 		t.Fatalf("projected Contact header = %q", contacts)
 	}
-	if expires := parseRegisterExpiresFromResponse(response, 600); expires != 42 {
-		t.Fatalf("registration expires = %d", expires)
+	if expires, err := registrationExpires(response, "<sip:second@ims.example>", 600*time.Second); err != nil || expires != 42*time.Second {
+		t.Fatalf("registration expires = %s, %v", expires, err)
 	}
 	if string(response.Body) != "body" {
 		t.Fatalf("response body = %q", response.Body)

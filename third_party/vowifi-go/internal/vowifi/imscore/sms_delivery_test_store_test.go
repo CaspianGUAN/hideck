@@ -31,11 +31,23 @@ func newMemoryDeliveryStore() *memoryDeliveryStore {
 	}
 }
 
-func (s *memoryDeliveryStore) CreateSMSDelivery(messageID, imsi, deviceID, peer, content string, partsTotal int, _ time.Time) error {
-	s.mu.Lock()
-	s.deliveries[messageID] = &DeliveryStatus{
+func (s *memoryDeliveryStore) CreateSMSDelivery(
+	messageID, imsi, deviceID, peer, content string,
+	partsTotal int,
+	_ time.Time,
+) error {
+	return s.CreateSMSDeliveryForIdentity(DeliveryRecord{
 		MessageID: messageID, IMSI: imsi, DeviceID: deviceID,
-		Peer: peer, Content: content, PartsTotal: partsTotal, State: smsDeliveryStatePending,
+		Peer: peer, Content: content, PartsTotal: partsTotal,
+	})
+}
+
+func (s *memoryDeliveryStore) CreateSMSDeliveryForIdentity(record DeliveryRecord) error {
+	s.mu.Lock()
+	s.deliveries[record.MessageID] = &DeliveryStatus{
+		MessageID: record.MessageID, ICCID: record.ICCID, IMSI: record.IMSI,
+		DeviceID: record.DeviceID, Peer: record.Peer, Content: record.Content,
+		PartsTotal: record.PartsTotal, State: smsDeliveryStatePending,
 	}
 	s.mu.Unlock()
 	return nil

@@ -25,7 +25,7 @@ func (req StartRequest) coreRequest() runtimecore.RuntimeStartRequest {
 	request := runtimecore.RuntimeStartRequest{
 		DeviceID: strings.TrimSpace(req.DeviceID), TraceID: strings.TrimSpace(req.TraceID),
 		Profile: profile.Profile{
-			IMSI: req.Profile.IMSI, MCC: req.Profile.MCC, MNC: req.Profile.MNC,
+			ICCID: req.Profile.ICCID, IMSI: req.Profile.IMSI, MCC: req.Profile.MCC, MNC: req.Profile.MNC,
 			IMEI: req.Profile.IMEI, UserAgent: req.Profile.UserAgent,
 			SMSC: req.Profile.SMSC, IMSDomain: req.Profile.IMSDomain,
 		},

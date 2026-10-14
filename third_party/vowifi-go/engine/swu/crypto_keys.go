@@ -74,9 +74,66 @@ func (s *Session) decryptAndParse(pkt *ikev2.IKEPacket) ([]ikev2.Payload, error)
 	return s.decryptAndParseWithKeys(pkt, s.ikeKeys)
 }
 
+// errUnauthenticatedIKE marks an inbound IKE message that failed decryption or
+// its integrity check. RFC 7296 2.21 drops such messages without acting on them.
+var errUnauthenticatedIKE = errors.New("swu: unauthenticated IKE message")
+
+// authenticatedSyntaxError is a payload decoding failure in a message that
+// passed its integrity check. It is not dropped like errUnauthenticatedIKE.
+type authenticatedSyntaxError struct{ err error }
+
+func (e *authenticatedSyntaxError) Error() string {
+	return "swu: authenticated IKE message has invalid syntax: " + e.err.Error()
+}
+func (e *authenticatedSyntaxError) Unwrap() error { return e.err }
+
+// localIKEError is a failure of our own key or cipher setup while opening an
+// inbound message. It is not the peer's fault and is not dropped.
+type localIKEError struct{ err error }
+
+func (e *localIKEError) Error() string { return e.err.Error() }
+func (e *localIKEError) Unwrap() error { return e.err }
+
+func decodeAuthenticatedPayloads(first ikev2.PayloadType, plain []byte) ([]ikev2.Payload, error) {
+	payloads, err := ikev2.DecodePayloadChainWithFirst(first, plain)
+	if err != nil {
+		return nil, &authenticatedSyntaxError{err: err}
+	}
+	return payloads, nil
+}
+
+// decryptAndParseWithKeys adds the received header and payload types to any
+// failure, so a message we cannot open can be told apart in the log.
 func (s *Session) decryptAndParseWithKeys(pkt *ikev2.IKEPacket, keys *IKEKeys) ([]ikev2.Payload, error) {
+	payloads, err := s.openIKE(pkt, keys)
+	if err != nil {
+		var syntax *authenticatedSyntaxError
+		var local *localIKEError
+		switch {
+		case errors.As(err, &syntax):
+			// The message passed its integrity check, so the peer is alive and
+			// the syntax error stays a real failure.
+			s.markInboundActivity()
+		case errors.As(err, &local):
+			// Our own keys or cipher setup failed; dropping would hide it.
+		default:
+			err = fmt.Errorf("%w: %w", errUnauthenticatedIKE, err)
+		}
+		if header := packetIKEHeader(pkt); header != nil {
+			return nil, fmt.Errorf("%w: exchange %d flags 0x%02x msg_id %d spi %016x/%016x payloads %s",
+				err, header.ExchangeType, header.Flags, header.MessageID,
+				header.SPIi, header.SPIr, ikePayloadTypes(pkt.Payloads))
+		}
+		return nil, err
+	}
+	// Only an authenticated message proves the peer is alive (DPD).
+	s.markInboundActivity()
+	return payloads, nil
+}
+
+func (s *Session) openIKE(pkt *ikev2.IKEPacket, keys *IKEKeys) ([]ikev2.Payload, error) {
 	if keys == nil {
-		return nil, errors.New("swu: no IKE SA keys")
+		return nil, &localIKEError{errors.New("swu: no IKE SA keys")}
 	}
 	if len(pkt.Payloads) != 1 {
 		return nil, errors.New("swu: expected a single Encrypted payload")
@@ -88,14 +145,14 @@ func (s *Session) decryptAndParseWithKeys(pkt *ikev2.IKEPacket, keys *IKEKeys) (
 	encKey, integKey := ikeProtectionKeysFor(keys, packetIKEHeader(pkt).Flags&ikeInitiatorFlag == 0)
 	cipher, err := crypto.PrepareCipher(s.encrAlg, encKey)
 	if err != nil {
-		return nil, fmt.Errorf("prepare cipher: %w", err)
+		return nil, &localIKEError{fmt.Errorf("prepare cipher: %w", err)}
 	}
 	if s.aead {
 		return s.decryptAEADIKE(pkt, enc, cipher)
 	}
 	integ := crypto.NewIntegrity(s.integAlg)
 	if integ == nil {
-		return nil, errors.New("swu: no integrity algorithm")
+		return nil, &localIKEError{errors.New("swu: no integrity algorithm")}
 	}
 
 	ivSize := cipher.IVSize()
@@ -110,7 +167,7 @@ func (s *Session) decryptAndParseWithKeys(pkt *ikev2.IKEPacket, keys *IKEKeys) (
 	// Verify integrity.
 	raw, err := pkt.Encode()
 	if err != nil {
-		return nil, fmt.Errorf("encode protected IKE packet: %w", err)
+		return nil, &localIKEError{fmt.Errorf("encode protected IKE packet: %w", err)}
 	}
 	if !integ.Verify(integKey, raw[:len(raw)-integSize], checksum) {
 		return nil, errors.New("swu: IKE message integrity check failed")
@@ -118,11 +175,12 @@ func (s *Session) decryptAndParseWithKeys(pkt *ikev2.IKEPacket, keys *IKEKeys) (
 
 	padded, err := cipher.Open(nil, ct, iv, nil)
 	if err != nil {
-		return nil, fmt.Errorf("decrypt IKE message: %w", err)
+		// The integrity check already passed, so this is the peer's message.
+		return nil, &authenticatedSyntaxError{err: fmt.Errorf("decrypt IKE message: %w", err)}
 	}
 	plain, err := unpadIKEPlaintext(padded)
 	if err != nil {
-		return nil, err
+		return nil, &authenticatedSyntaxError{err: err}
 	}
-	return ikev2.DecodePayloadChainWithFirst(enc.NextPayload, plain)
+	return decodeAuthenticatedPayloads(enc.NextPayload, plain)
 }

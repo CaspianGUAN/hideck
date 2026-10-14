@@ -59,6 +59,18 @@ type DeliveryStatus struct {
 	CreatedAt  time.Time            `json:"created_at"`
 	UpdatedAt  time.Time            `json:"updated_at"`
 	Parts      []DeliveryPartStatus `json:"parts"`
+	ICCID      string               `json:"iccid"`
+}
+
+type DeliveryRecord struct {
+	MessageID  string
+	ICCID      string
+	IMSI       string
+	DeviceID   string
+	Peer       string
+	Content    string
+	PartsTotal int
+	At         time.Time
 }
 
 type Store interface {
@@ -68,6 +80,10 @@ type Store interface {
 	RecomputeSMSDelivery(messageID string, at time.Time) error
 	UpdateSMSDeliveryState(messageID, state, lastError string, acks int, at time.Time) error
 	UpsertSMSDeliveryPart(messageID string, partNo int, callID string, rpMR int, state string, sentAt time.Time) error
+}
+
+type IdentityStore interface {
+	CreateSMSDeliveryForIdentity(record DeliveryRecord) error
 }
 
 // SIPResultStore is the optional initial SIP transaction result capability.
@@ -87,6 +103,7 @@ var ErrInboundFragmentCollision = errors.New("SMS inbound fragment collision")
 // InboundFragmentOwner isolates persisted fragments between subscriptions.
 type InboundFragmentOwner struct {
 	DeviceID string
+	ICCID    string
 	IMSI     string
 }
 

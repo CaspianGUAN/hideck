@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pion/webrtc/v4"
+	"github.com/yibaiba/hideck/pkg/logger"
 )
 
 type mediaSessionOptions struct {
@@ -49,6 +50,9 @@ type MediaSession struct {
 	fromIMS              atomic.Uint64
 	toIMS                atomic.Uint64
 	lost                 atomic.Uint64
+	browserPackets       atomic.Uint64
+	browserRejected      atomic.Uint64
+	browserPeak          atomic.Uint64
 }
 
 func newMediaSession(ctx context.Context, options mediaSessionOptions) (*MediaSession, string, error) {
@@ -223,6 +227,7 @@ func (s *MediaSession) Close() error {
 	}
 	var result error
 	s.closeOnce.Do(func() {
+		logger.Info("网页音频转发统计", "media_id", s.ID, "browser_packets", s.browserPackets.Load(), "browser_rejected", s.browserRejected.Load(), "browser_peak", s.browserPeak.Load(), "to_modem", s.toIMS.Load(), "from_modem", s.fromIMS.Load(), "lost", s.lost.Load())
 		s.stopSilentRTP()
 		s.mu.Lock()
 		codec := s.realtimeCodec

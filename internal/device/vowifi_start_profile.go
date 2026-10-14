@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yibaiba/hideck/internal/modem"
-	"github.com/yibaiba/hideck/pkg/logger"
 	"github.com/iniwex5/vowifi-go/runtimehost"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
+	"github.com/yibaiba/hideck/internal/modem"
+	"github.com/yibaiba/hideck/pkg/logger"
 )
 
 func (p *Pool) buildVoWiFiStartProfile(worker *Worker, traceID string) (identity.Profile, error) {
@@ -60,7 +60,9 @@ func (p *Pool) buildVoWiFiStartProfile(worker *Worker, traceID string) (identity
 		"mnc", mnc,
 		"imei", imei)
 
-	return buildVoWiFiRawProfile(imsi, mcc, mnc, imei, smsc), nil
+	return buildVoWiFiRawProfile(identity.Profile{
+		ICCID: iccid, IMSI: imsi, MCC: mcc, MNC: mnc, IMEI: imei, SMSC: smsc,
+	}), nil
 }
 
 func (p *Pool) resolveVoWiFiSMSC(worker *Worker, imsi, iccid, traceID string) string {
@@ -110,13 +112,14 @@ func (p *Pool) resolveVoWiFiSMSC(worker *Worker, imsi, iccid, traceID string) st
 	return ""
 }
 
-func buildVoWiFiRawProfile(imsi, mcc, mnc, imei, smsc string) identity.Profile {
+func buildVoWiFiRawProfile(profile identity.Profile) identity.Profile {
 	return identity.Profile{
-		IMSI: strings.TrimSpace(imsi),
-		MCC:  strings.TrimSpace(mcc),
-		MNC:  strings.TrimSpace(mnc),
-		IMEI: strings.TrimSpace(imei),
-		SMSC: strings.TrimSpace(smsc),
+		ICCID: strings.TrimSpace(profile.ICCID),
+		IMSI:  strings.TrimSpace(profile.IMSI),
+		MCC:   strings.TrimSpace(profile.MCC),
+		MNC:   strings.TrimSpace(profile.MNC),
+		IMEI:  strings.TrimSpace(profile.IMEI),
+		SMSC:  strings.TrimSpace(profile.SMSC),
 	}
 }
 

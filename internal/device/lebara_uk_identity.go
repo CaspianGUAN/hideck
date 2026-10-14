@@ -396,7 +396,7 @@ func (p *Pool) finishLebaraUKIdentityRecoverSuccess(w *Worker) {
 	p.clearLebaraUKIdentityRecover(w.ID)
 	p.enforceLebaraUKRadioOff(w, "lebara_uk_identity_recovered")
 	p.broadcastVoWiFiStateChange(w.ID)
-	if !w.Config.VoWiFiEnabled || IsNativeVoLTEMode(w.Config.PhoneMode) {
+	if !w.Config.VoWiFiEnabled || UsesModemPhoneControl(w.Config.PhoneMode) {
 		return
 	}
 	if err := p.waitLebaraUKSwitchIdle(w.ID); err != nil {

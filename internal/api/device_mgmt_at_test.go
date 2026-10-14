@@ -12,7 +12,6 @@ import (
 	"github.com/yibaiba/hideck/internal/backend"
 	"github.com/yibaiba/hideck/internal/config"
 	"github.com/yibaiba/hideck/internal/device"
-	"github.com/yibaiba/hideck/internal/modem"
 )
 
 type fakeManualATSession struct {
@@ -33,54 +32,6 @@ func (s *fakeManualATSession) Execute(cmd string, timeout time.Duration) (string
 func (s *fakeManualATSession) Close() error {
 	s.closed = true
 	return s.closeErr
-}
-
-func TestExecuteManualATOnPortUsesTransientSerialSession(t *testing.T) {
-	orig := openManualATSession
-	defer func() { openManualATSession = orig }()
-
-	fake := &fakeManualATSession{resp: "OK\r\n"}
-	var gotPort string
-	openManualATSession = func(port string) (manualATSession, error) {
-		gotPort = port
-		return fake, nil
-	}
-
-	resp, err := executeManualATOnPort("/dev/ttyUSB2", "AT+CSQ", 7*time.Second)
-	if err != nil {
-		t.Fatalf("executeManualATOnPort() error = %v", err)
-	}
-	if resp != "OK\r\n" {
-		t.Fatalf("executeManualATOnPort() resp = %q, want OK", resp)
-	}
-	if gotPort != "/dev/ttyUSB2" {
-		t.Fatalf("open port = %q, want /dev/ttyUSB2", gotPort)
-	}
-	if fake.cmd != "AT+CSQ" || fake.timeout != 7*time.Second {
-		t.Fatalf("Execute() got cmd=%q timeout=%s", fake.cmd, fake.timeout)
-	}
-	if !fake.closed {
-		t.Fatal("manual AT session was not closed")
-	}
-}
-
-func TestExecuteManualATOnPortRejectsEmptyPort(t *testing.T) {
-	if _, err := executeManualATOnPort(" ", "AT", time.Second); err == nil {
-		t.Fatal("executeManualATOnPort() error = nil, want empty-port error")
-	}
-}
-
-func TestExecuteManualATOnPortReturnsOpenError(t *testing.T) {
-	orig := openManualATSession
-	defer func() { openManualATSession = orig }()
-
-	openManualATSession = func(port string) (manualATSession, error) {
-		return nil, errors.New("busy")
-	}
-
-	if _, err := executeManualATOnPort("/dev/ttyUSB2", "AT", time.Second); err == nil || err.Error() != "打开 AT 端口 /dev/ttyUSB2 失败: busy" {
-		t.Fatalf("executeManualATOnPort() error = %v", err)
-	}
 }
 
 func TestHandleDeviceMgmtExecuteATDoesNotOpenSecondSessionForMBIMBackend(t *testing.T) {
@@ -121,17 +72,5 @@ func TestHandleDeviceMgmtExecuteATDoesNotOpenSecondSessionForMBIMBackend(t *test
 	}
 	if !strings.Contains(rec.Body.String(), "没有可用 AT 管理器") {
 		t.Fatalf("body=%s want explicit scheduler error", rec.Body.String())
-	}
-}
-
-func TestManualATPortForWorkerFallsBackToModemPort(t *testing.T) {
-	m, err := modem.New(config.DeviceConfig{ID: "d", DeviceBackend: "qmi", ManagePort: "/dev/ttyUSB2"})
-	if err != nil {
-		t.Fatalf("modem.New() error = %v", err)
-	}
-	// worker.Config 路径全空(零路径),只有 Modem 内存里有端口。
-	w := &device.Worker{ID: "d", Config: config.DeviceConfig{ID: "d", DeviceBackend: "qmi"}, Modem: m}
-	if got := manualATPortForWorker(w); got != "/dev/ttyUSB2" {
-		t.Fatalf("manualATPortForWorker() = %q, want /dev/ttyUSB2", got)
 	}
 }

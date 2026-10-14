@@ -22,7 +22,8 @@ func TestSMSInboundFragmentPersistsAcrossDatabaseReopen(t *testing.T) {
 		DB = previousDB
 	})
 	scope := SMSInboundFragmentScope{
-		DeviceID: "wwan0", IMSI: "234102356143376", SessionKey: "sender=giffgaff|ref=198",
+		DeviceID: "wwan0", ICCID: "8944100000000000001",
+		IMSI: "234102356143376", SessionKey: "sender=giffgaff|ref=198",
 	}
 	fragment := SMSInboundFragment{
 		Reference: 198, ReferenceBits: 8, Total: 2, Sequence: 1,
@@ -68,6 +69,27 @@ func TestSMSInboundFragmentPersistsAcrossDatabaseReopen(t *testing.T) {
 	rows, err = LoadSMSInboundFragments(scope)
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("rows after delete=%#v err=%v", rows, err)
+	}
+}
+
+func TestSMSInboundFragmentsFollowSIMAcrossDeviceMove(t *testing.T) {
+	openTestDB(t)
+	first := SMSInboundFragmentScope{
+		DeviceID: "wwan0", ICCID: "8944100000000000088",
+		IMSI: "234150000000088", SessionKey: "sender=service|ref=88",
+	}
+	fragment := SMSInboundFragment{
+		Reference: 88, ReferenceBits: 8, Total: 2, Sequence: 1,
+		Content: "first", ArrivedAt: time.Now(),
+	}
+	if _, err := SaveSMSInboundFragment(first, fragment); err != nil {
+		t.Fatal(err)
+	}
+	moved := first
+	moved.DeviceID = "wwan1"
+	rows, err := LoadSMSInboundFragments(moved)
+	if err != nil || len(rows) != 1 || rows[0].Content != "first" {
+		t.Fatalf("moved SIM fragments=%+v err=%v", rows, err)
 	}
 }
 

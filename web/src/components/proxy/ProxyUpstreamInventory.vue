@@ -15,6 +15,8 @@ defineProps<{
   rows: readonly UpstreamProxyPresentation[]
 }>()
 
+const autoProbe = defineModel<boolean>('autoProbe', { required: true })
+
 defineEmits<{
   add: []
   delete: [id: string]
@@ -33,7 +35,7 @@ defineEmits<{
     kicker="ROAMING PROXY INVENTORY"
     :loading="loading"
     :refreshing="refreshing"
-    subtitle="公共 DNS UDP 用于通用健康检查；VoWiFi 可用性最终由实际 ePDG/IKE 建链确认。"
+    subtitle="SIM 国家规则用于选择代理；出口国家由 Cloudflare HTTPS 实测，UDP 路径可能不同。VoWiFi 仍由实际 ePDG/IKE 建链确认。"
     title="漫游前置代理"
     title-id="upstream-inventory-title"
     tone="communication"
@@ -41,6 +43,11 @@ defineEmits<{
     @refresh="$emit('refresh')"
   >
     <template #icon><el-icon><Earth24Regular /></el-icon></template>
+
+    <div class="proxy-probe-toolbar">
+      <label><input v-model="autoProbe" type="checkbox" />每分钟自动检测</label>
+      <span>{{ autoProbe ? '打开此页时更新；关闭页面后停止' : '自动检测已暂停，可点击刷新重新检测' }}</span>
+    </div>
 
     <div class="proxy-table-wrap">
       <table class="proxy-inventory-table">
@@ -50,8 +57,8 @@ defineEmits<{
             <th scope="col">地址（SOCKS5）</th>
             <th scope="col">启用状态</th>
             <th scope="col">公共 DNS UDP</th>
-            <th scope="col">认证状态</th>
-            <th scope="col">国家规则</th>
+            <th scope="col">实测出口（HTTPS）</th>
+            <th scope="col">SIM 国家规则</th>
             <th scope="col"><span class="sr-only">操作</span></th>
           </tr>
         </thead>
@@ -61,7 +68,10 @@ defineEmits<{
               <strong>{{ row.name }}</strong>
               <small class="proxy-row-id">{{ row.id || '无 ID' }}</small>
             </td>
-            <td data-label="地址（SOCKS5）"><code>{{ row.address }}</code></td>
+            <td data-label="地址（SOCKS5）">
+              <code>{{ row.address }}</code>
+              <small class="proxy-observation-meta">{{ row.authenticationLabel }}</small>
+            </td>
             <td data-label="启用状态">
               <ProxyStatusBadge :label="row.enabledLabel" :tone="row.enabledTone" />
             </td>
@@ -75,8 +85,14 @@ defineEmits<{
                 {{ row.healthDetail }}
               </small>
             </td>
-            <td data-label="认证状态">{{ row.authenticationLabel }}</td>
-            <td data-label="国家规则">
+            <td data-label="实测出口（HTTPS）">
+              <ProxyStatusBadge :label="row.egress.label" :tone="row.egress.tone" :detail="row.egress.detail" />
+              <code v-if="row.egress.ip" class="proxy-egress-ip">{{ row.egress.ip }}</code>
+              <small v-if="row.egress.checkedAt" class="proxy-observation-meta">检测于 {{ row.egress.checkedAt }}</small>
+              <small v-if="row.egress.tone === 'warning'" class="proxy-egress-warning">{{ row.egress.detail }}</small>
+              <small v-if="row.egress.change" class="proxy-egress-warning">最近出口变化：{{ row.egress.change }}</small>
+            </td>
+            <td data-label="SIM 国家规则">
               <button
                 type="button"
                 class="proxy-rule-button"
@@ -87,6 +103,7 @@ defineEmits<{
                 <span>{{ row.ruleCount }}</span>
                 <small>条规则</small>
               </button>
+              <small v-if="row.ruleCountries" class="proxy-observation-meta">{{ row.ruleCountries }}</small>
             </td>
             <td data-label="操作">
               <span class="proxy-row-actions">
@@ -107,15 +124,21 @@ defineEmits<{
 
 <style scoped>
 .proxy-table-wrap { min-width: 0; }
+.proxy-probe-toolbar { padding: 8px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; border-bottom: 1px solid var(--ui-border); color: var(--ui-text-muted); font-size: var(--ui-font-body-sm); }
+.proxy-probe-toolbar label { min-height: 44px; display: inline-flex; align-items: center; gap: 8px; color: var(--ui-text); cursor: pointer; }
+.proxy-probe-toolbar input { width: 18px; height: 18px; accent-color: var(--ui-communication); }
+.proxy-observation-meta { display: block; margin-top: 5px; color: var(--ui-text-muted); font-size: var(--ui-font-caption); line-height: 1.5; }
+.proxy-egress-ip { display: block; margin-top: 6px; }
+.proxy-egress-warning { display: block; margin-top: 6px; color: var(--ui-warning); font-size: var(--ui-font-caption); line-height: 1.5; }
 .proxy-inventory-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .proxy-inventory-table th { height: 40px; padding: 0 12px; border-bottom: 1px solid var(--ui-border); color: var(--ui-text-muted); font-size: var(--ui-font-caption); font-weight: 600; text-align: left; }
 .proxy-inventory-table td { min-width: 0; min-height: 58px; padding: 11px 12px; border-bottom: 1px solid var(--ui-border-muted); color: var(--ui-text); font-size: var(--ui-font-body-sm); vertical-align: middle; overflow-wrap: anywhere; }
 .proxy-inventory-table tr:last-child td { border-bottom: 0; }
-.proxy-inventory-table th:nth-child(1) { width: 15%; }
-.proxy-inventory-table th:nth-child(2) { width: 21%; }
-.proxy-inventory-table th:nth-child(3) { width: 12%; }
-.proxy-inventory-table th:nth-child(4) { width: 18%; }
-.proxy-inventory-table th:nth-child(5) { width: 12%; }
+.proxy-inventory-table th:nth-child(1) { width: 12%; }
+.proxy-inventory-table th:nth-child(2) { width: 18%; }
+.proxy-inventory-table th:nth-child(3) { width: 10%; }
+.proxy-inventory-table th:nth-child(4) { width: 16%; }
+.proxy-inventory-table th:nth-child(5) { width: 23%; }
 .proxy-inventory-table th:nth-child(6) { width: 12%; }
 .proxy-inventory-table th:nth-child(7) { width: 96px; }
 .proxy-inventory-table strong { display: block; font-weight: 650; }

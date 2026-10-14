@@ -45,6 +45,9 @@ type SMSSent struct {
 	Content    string
 	Time       time.Time
 	TotalParts int
+	MessageID  string
+	ICCID      string
+	IMSI       string
 }
 
 // LocalNumberLearned is published when the local phone number is learned.

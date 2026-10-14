@@ -5,6 +5,7 @@ import type {
   UpstreamProxy
 } from '../types/api'
 import type { UpstreamProxyHealth } from './upstreamProxyHealth'
+import { presentProxyEgress, type ProxyEgressPresentation } from './proxyEgressPresentation'
 
 export type ProxyPresentationTone = 'danger' | 'neutral' | 'success' | 'warning'
 
@@ -20,6 +21,8 @@ export type UpstreamProxyPresentation = Readonly<{
   healthDetail: string
   authenticationLabel: string
   ruleCount: number
+  ruleCountries: string
+  egress: ProxyEgressPresentation
 }>
 
 export type OutboundProxyPresentation = Readonly<{
@@ -41,6 +44,7 @@ export type OutboundProxyPresentation = Readonly<{
 type UpstreamPresentationInput = Readonly<{
   proxy: UpstreamProxy
   ruleCount: number
+  ruleCountryCodes?: readonly string[]
   health?: UpstreamProxyHealth
 }>
 
@@ -53,6 +57,7 @@ type OutboundPresentationInput = Readonly<{
 export function createUpstreamProxyPresentation({
   proxy,
   ruleCount,
+  ruleCountryCodes = [],
   health
 }: UpstreamPresentationInput): UpstreamProxyPresentation {
   const healthPresentation = presentUpstreamHealth(proxy.enabled, health)
@@ -67,6 +72,8 @@ export function createUpstreamProxyPresentation({
     healthTone: healthPresentation.tone,
     healthDetail: healthPresentation.detail,
     authenticationLabel: normalizedText(proxy.username) ? '账号认证' : '免认证',
+    egress: presentProxyEgress(proxy.enabled, health),
+    ruleCountries: [...new Set(ruleCountryCodes)].join(' / '),
     ruleCount: Math.max(0, Math.trunc(ruleCount))
   })
 }

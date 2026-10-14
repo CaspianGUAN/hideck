@@ -17,7 +17,7 @@ var ErrISIMUnavailable = errors.New("identity: ISIM application unavailable")
 // NormalizeProfile trims and normalises the profile fields.
 func NormalizeProfile(p Profile) Profile {
 	return Profile{
-		IMSI: strings.TrimSpace(p.IMSI), MCC: strings.TrimSpace(p.MCC), MNC: strings.TrimSpace(p.MNC),
+		ICCID: strings.TrimSpace(p.ICCID), IMSI: strings.TrimSpace(p.IMSI), MCC: strings.TrimSpace(p.MCC), MNC: strings.TrimSpace(p.MNC),
 		IMEI: strings.TrimSpace(p.IMEI), UserAgent: strings.TrimSpace(p.UserAgent),
 		SMSC: strings.TrimSpace(p.SMSC), IMSDomain: policy.NormalizeIMSDomain(p.IMSDomain),
 	}
@@ -69,7 +69,7 @@ func PrepareStart(input PrepareStartInput) (PreparedSession, error) {
 
 func profileToInternal(value Profile) internalprofile.Profile {
 	return internalprofile.Profile{
-		IMSI: value.IMSI, MCC: value.MCC, MNC: value.MNC, IMEI: value.IMEI,
+		ICCID: value.ICCID, IMSI: value.IMSI, MCC: value.MCC, MNC: value.MNC, IMEI: value.IMEI,
 		UserAgent: value.UserAgent, SMSC: value.SMSC, IMSDomain: value.IMSDomain,
 	}
 }

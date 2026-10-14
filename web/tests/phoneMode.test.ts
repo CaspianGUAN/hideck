@@ -23,9 +23,17 @@ test('wifi calling is only wifi mode with phone on', () => {
 })
 
 test('phone mode labels', () => {
+  assert.equal(phoneModeLabel('modem_voice'), '模组直拨')
   assert.equal(phoneModeLabel('volte'), 'VoLTE')
   assert.equal(phoneModeLabel('cellular'), '蜂窝数据')
   assert.equal(phoneModeLabel('wifi'), 'WiFi calling')
+})
+
+test('modem voice camps on cell without exposing software IMS controls', () => {
+  assert.equal(phoneModeCampsOnCell('modem_voice'), true)
+  assert.equal(isWifiCallingEnabled('modem_voice', true), false)
+  assert.equal(isNativeVoLTEMode('modem_voice'), false)
+  assert.equal(deviceSupportsUt({ phone_mode: 'modem_voice', vowifi_enabled: true }), false)
 })
 
 test('Ut is only for software IMS WiFi calling devices', () => {

@@ -2,6 +2,7 @@ package volte
 
 import (
 	"fmt"
+	"github.com/yibaiba/hideck/internal/mbn"
 	"strconv"
 	"strings"
 )
@@ -75,7 +76,7 @@ func IMEIQueryCommands() []string {
 }
 
 func MBNAutoSelQueryCommand() string {
-	return `AT+QMBNCFG="autosel"?`
+	return `AT+QMBNCFG="autosel"`
 }
 
 func MBNListQueryCommand() string {
@@ -154,25 +155,13 @@ func ParseMBNAutoSel(resp string) (bool, string, error) {
 }
 
 func ParseMBNList(resp string) ([]MBNEntry, error) {
-	var entries []MBNEntry
-	for _, raw := range strings.Split(resp, "\n") {
-		line := strings.TrimSpace(raw)
-		lower := strings.ToLower(line)
-		if !strings.HasPrefix(lower, `+qmbncfg: "list"`) {
-			continue
-		}
-		_, rest, ok := strings.Cut(line, ",")
-		if !ok {
-			continue
-		}
-		entry, err := parseMBNListArgs(strings.TrimSpace(rest))
-		if err != nil {
-			return nil, err
-		}
-		entries = append(entries, entry)
+	profiles, err := mbn.ParseList(resp)
+	if err != nil {
+		return nil, err
 	}
-	if len(entries) == 0 {
-		return nil, fmt.Errorf("volte: missing +QMBNCFG: \"List\" in %q", compactAT(resp))
+	entries := make([]MBNEntry, 0, len(profiles))
+	for _, p := range profiles {
+		entries = append(entries, MBNEntry{Index: p.Index, Name: p.Name, Selected: p.Selected, Activated: p.Activated})
 	}
 	return entries, nil
 }
@@ -190,31 +179,6 @@ func SelectedMBN(entries []MBNEntry) (MBNEntry, bool) {
 		}
 	}
 	return selected, found
-}
-
-func parseMBNListArgs(args string) (MBNEntry, error) {
-	name, before, after, ok := cutQuoted(args)
-	if !ok {
-		return MBNEntry{}, fmt.Errorf("volte: malformed MBN list %q", args)
-	}
-	head := splitQCFGArgs(strings.Trim(before, ","))
-	if len(head) < 3 {
-		return MBNEntry{}, fmt.Errorf("volte: malformed MBN list %q", args)
-	}
-	idx, err := strconv.Atoi(head[0])
-	if err != nil {
-		return MBNEntry{}, fmt.Errorf("volte: mbn index: %w", err)
-	}
-	selected, err := parse01(head[1])
-	if err != nil {
-		return MBNEntry{}, fmt.Errorf("volte: mbn selected: %w", err)
-	}
-	activated, err := parse01(head[2])
-	if err != nil {
-		return MBNEntry{}, fmt.Errorf("volte: mbn activated: %w", err)
-	}
-	_ = after
-	return MBNEntry{Index: idx, Selected: selected, Activated: activated, Name: name}, nil
 }
 
 func cutQuoted(s string) (quoted, before, after string, ok bool) {

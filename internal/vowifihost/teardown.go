@@ -62,7 +62,7 @@ func (m *Manager) TeardownSession(ctx context.Context, deviceID string, opts Tea
 		reason = "teardown"
 	}
 	if !opts.SkipInvalidate {
-		m.InvalidateRuntime(deviceID, reason)
+		m.invalidateRuntimeState(deviceID, reason)
 	}
 	if !m.StopInstanceForTeardown(ctx, deviceID, reason) {
 		return false
@@ -78,7 +78,8 @@ func (m *Manager) TeardownSession(ctx context.Context, deviceID string, opts Tea
 }
 
 func (m *Manager) TeardownForReconnect(ctx context.Context, deviceID string) bool {
-	if !m.TeardownSession(ctx, deviceID, TeardownOptions{Reason: "reconnect", RestoreSMS: true}) {
+	m.InvalidateRuntime(deviceID, "reconnect")
+	if !m.TeardownSession(ctx, deviceID, TeardownOptions{Reason: "reconnect", RestoreSMS: true, SkipInvalidate: true}) {
 		return false
 	}
 	logger.Info("模块掉线，已拆除旧 VoWiFi 实例", "device", strings.TrimSpace(deviceID))
@@ -86,6 +87,7 @@ func (m *Manager) TeardownForReconnect(ctx context.Context, deviceID string) boo
 }
 
 func (m *Manager) TeardownForSwitch(ctx context.Context, deviceID string) bool {
+	m.ClearDesiredRecoverState(deviceID)
 	if !m.TeardownSession(ctx, deviceID, TeardownOptions{Reason: "switch", RestoreSMS: true}) {
 		return false
 	}
@@ -94,6 +96,26 @@ func (m *Manager) TeardownForSwitch(ctx context.Context, deviceID string) bool {
 }
 
 func (m *Manager) InvalidateRuntime(deviceID, reason string) uint64 {
+	if m == nil || strings.TrimSpace(deviceID) == "" {
+		return 0
+	}
+	stateMu := m.stateLock(deviceID)
+	stateMu.Lock()
+	defer stateMu.Unlock()
+	m.lifecycleController().Invalidate(deviceID)
+	m.ClearDesiredRecoverState(deviceID)
+	return m.invalidateRuntimeStateLocked(deviceID, reason)
+}
+
+// Internal teardown must not cancel its own lifecycle command.
+func (m *Manager) invalidateRuntimeState(deviceID, reason string) uint64 {
+	stateMu := m.stateLock(deviceID)
+	stateMu.Lock()
+	defer stateMu.Unlock()
+	return m.invalidateRuntimeStateLocked(deviceID, reason)
+}
+
+func (m *Manager) invalidateRuntimeStateLocked(deviceID, reason string) uint64 {
 	if m == nil {
 		return 0
 	}

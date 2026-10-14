@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yibaiba/hideck/pkg/logger"
 	"github.com/iniwex5/vowifi-go/runtimehost"
+	"github.com/yibaiba/hideck/pkg/logger"
 )
 
 const failedRuntimeStopTimeout = 10 * time.Second
@@ -19,14 +19,23 @@ func isTerminalRuntimeFailure(state runtimehost.State) bool {
 
 func (m *Manager) releaseFailedRuntime(deviceID string, inst *runtimehost.Instance, state runtimehost.State) bool {
 	controlledReauth := state.LastErrorClass == runtimehost.ErrorClassReauthentication
-	if m == nil || inst == nil || !m.RuntimeStore().DeleteInstance(deviceID, inst) {
+	if m == nil || inst == nil {
 		return false
 	}
 	invalidationReason := "runtime_failure"
 	if controlledReauth {
 		invalidationReason = ikeReauthenticationReason
 	}
-	m.InvalidateRuntime(deviceID, invalidationReason)
+	stateMu := m.stateLock(deviceID)
+	stateMu.Lock()
+	if !m.RuntimeStore().DeleteInstance(deviceID, inst) {
+		stateMu.Unlock()
+		return false
+	}
+	m.lifecycleController().Invalidate(deviceID)
+	m.ClearDesiredRecoverState(deviceID)
+	epoch := m.invalidateRuntimeStateLocked(deviceID, invalidationReason)
+	stateMu.Unlock()
 	m.BroadcastState(deviceID)
 
 	stopCtx, cancel := context.WithTimeout(context.Background(), failedRuntimeStopTimeout)
@@ -34,9 +43,15 @@ func (m *Manager) releaseFailedRuntime(deviceID string, inst *runtimehost.Instan
 	if err := inst.Stop(stopCtx); err != nil {
 		logger.Warn("VoWiFi 故障实例停止失败", "device", deviceID, "err", err)
 	}
+	stateMu.Lock()
+	if !m.ShouldRun(deviceID, epoch) || m.Active(deviceID) || m.Starting(deviceID) {
+		stateMu.Unlock()
+		return true
+	}
 	if adapter := m.hostAdapter(); adapter != nil {
 		adapter.RestoreSMSMode(deviceID)
 	}
+	stateMu.Unlock()
 	if controlledReauth {
 		logger.Info("VoWiFi IKE 重鉴权旧实例已释放，立即请求新运行时", "device", deviceID)
 		m.requestRuntimeRecycle(deviceID, ikeReauthenticationReason)

@@ -542,6 +542,9 @@ func (w *Worker) shouldAbortCellularRegistration() bool {
 	if w == nil || w.cellularRadioIsSuppressed() {
 		return true
 	}
+	if w.Pool != nil && w.Pool.CheckMBNIdle(w.ID) != nil {
+		return true
+	}
 	return w.Pool != nil && w.Pool.IsVoWiFiActive(w.ID)
 }
 

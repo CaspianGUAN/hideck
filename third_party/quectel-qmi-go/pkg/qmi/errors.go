@@ -69,6 +69,7 @@ const (
 	QMIErrOutOfCall              uint16 = 0x000F // Out of call / 未建立数据呼叫
 	QMIErrPolicyMismatch         uint16 = 0x004A // Policy mismatch / 策略不匹配
 	QMIErrInvalidProfile         uint16 = 0x0019 // Invalid profile / 无效配置文件
+	QMIErrOpNetworkUnsupported   uint16 = 0x0018 // Operation not supported by network / 网络不支持该操作
 	QMIErrClientIDsExhausted     uint16 = 0x001F // Client IDs exhausted / 客户端 ID 耗尽
 	QMIErrInvalidRegisterAction  uint16 = 0x0020 // Invalid register action / 无效驻网动作
 	QMIErrInvalidQmiCmd          uint16 = 0x0047 // Invalid QMI command / 不支持的QMI命令

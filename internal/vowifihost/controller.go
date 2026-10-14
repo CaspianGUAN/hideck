@@ -70,6 +70,7 @@ type deviceLifecycle struct {
 	generation   uint64
 	runCancel    context.CancelFunc
 	runCancelSeq uint64
+	invalidation uint64
 }
 
 func NewLifecycleController(options ...LifecycleControllerOptions) *LifecycleController {
@@ -111,12 +112,19 @@ func (c *LifecycleController) Submit(ctx context.Context, cmd LifecycleCommand) 
 	}
 
 	lifecycle := c.device(cmd.DeviceID)
+	invalidation := c.invalidationVersion(lifecycle)
 	if cmd.Kind == LifecycleCommandSwitchBegin || cmd.Kind == LifecycleCommandRestart {
-		return c.submitPreempting(ctx, lifecycle, cmd)
+		return c.submitPreempting(ctx, lifecycle, lifecycleSubmission{command: cmd, invalidation: invalidation, preempt: true})
 	}
 
 	lifecycle.runMu.Lock()
 	defer lifecycle.runMu.Unlock()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if invalidation != c.invalidationVersion(lifecycle) {
+		return context.Canceled
+	}
 
 	if c.commandGenerationStale(lifecycle, cmd) {
 		currentGeneration := c.currentGeneration(lifecycle)
@@ -137,26 +145,16 @@ func (c *LifecycleController) Submit(ctx context.Context, cmd LifecycleCommand) 
 		return nil
 	}
 
-	if cmd.Generation == 0 {
-		switch cmd.Kind {
-		case LifecycleCommandEnable,
-			LifecycleCommandDisable,
-			LifecycleCommandRestart,
-			LifecycleCommandRecover:
-			cmd.Generation = c.nextGeneration(lifecycle)
-		case LifecycleCommandSwitchEnd:
-			if cmd.RestoreRadio {
-				cmd.Generation = c.nextGeneration(lifecycle)
-			}
-		}
-	}
-
-	runCtx, clearRun := c.bindRunContext(ctx, lifecycle)
+	runCtx, cmd, clearRun := c.bindCommandRun(ctx, lifecycle, lifecycleSubmission{command: cmd, invalidation: invalidation})
 	defer clearRun()
+	if err := runCtx.Err(); err != nil {
+		return err
+	}
 	return c.runCommand(runCtx, cmd)
 }
 
-func (c *LifecycleController) submitPreempting(ctx context.Context, lifecycle *deviceLifecycle, cmd LifecycleCommand) error {
+func (c *LifecycleController) submitPreempting(ctx context.Context, lifecycle *deviceLifecycle, sub lifecycleSubmission) error {
+	cmd := sub.command
 	if c.commandGenerationStale(lifecycle, cmd) {
 		currentGeneration := c.currentGeneration(lifecycle)
 		logger.Debug("忽略过期 VoWiFi lifecycle 命令",
@@ -167,12 +165,15 @@ func (c *LifecycleController) submitPreempting(ctx context.Context, lifecycle *d
 			"reason", strings.TrimSpace(cmd.Reason))
 		return nil
 	}
-	if cmd.Generation == 0 {
-		cmd.Generation = c.nextGeneration(lifecycle)
-	}
-	c.cancelActiveRun(lifecycle)
-	runCtx, clearRun := c.bindRunContext(ctx, lifecycle)
+	runCtx, cmd, clearRun := c.bindCommandRun(ctx, lifecycle, sub)
 	defer clearRun()
+	// Preemption requests cancellation immediately, but hardware ownership is
+	// transferred only after the previous command has finished its cleanup.
+	lifecycle.runMu.Lock()
+	defer lifecycle.runMu.Unlock()
+	if err := runCtx.Err(); err != nil {
+		return err
+	}
 	return c.runCommand(runCtx, cmd)
 }
 
@@ -230,40 +231,6 @@ func (c *LifecycleController) currentGeneration(lifecycle *deviceLifecycle) uint
 	lifecycle.generationMu.Lock()
 	defer lifecycle.generationMu.Unlock()
 	return lifecycle.generation
-}
-
-func (c *LifecycleController) bindRunContext(ctx context.Context, lifecycle *deviceLifecycle) (context.Context, func()) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if lifecycle == nil {
-		return ctx, func() {}
-	}
-	runCtx, cancel := context.WithCancel(ctx)
-	lifecycle.generationMu.Lock()
-	lifecycle.runCancelSeq++
-	seq := lifecycle.runCancelSeq
-	lifecycle.runCancel = cancel
-	lifecycle.generationMu.Unlock()
-	return runCtx, func() {
-		lifecycle.generationMu.Lock()
-		if lifecycle.runCancelSeq == seq {
-			lifecycle.runCancel = nil
-		}
-		lifecycle.generationMu.Unlock()
-	}
-}
-
-func (c *LifecycleController) cancelActiveRun(lifecycle *deviceLifecycle) {
-	if lifecycle == nil {
-		return
-	}
-	lifecycle.generationMu.Lock()
-	cancel := lifecycle.runCancel
-	lifecycle.generationMu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
 }
 
 func (c *LifecycleController) commandGenerationStale(lifecycle *deviceLifecycle, cmd LifecycleCommand) bool {

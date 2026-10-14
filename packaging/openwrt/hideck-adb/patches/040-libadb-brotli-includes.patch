@@ -1,0 +1,13 @@
+From: HiDeck maintainers
+Subject: Propagate bundled Brotli headers to libadb
+
+libadb itself compiles compression code. Linking Brotli only to the final
+adb executable does not propagate its private include path to that library.
+
+--- a/vendor/CMakeLists.adb.txt
++++ b/vendor/CMakeLists.adb.txt
+@@ -204 +204,3 @@
+-target_link_libraries(adb
++target_link_libraries(libadb PRIVATE
++	PkgConfig::libbrotlicommon PkgConfig::libbrotlidec PkgConfig::libbrotlienc)
++target_link_libraries(adb

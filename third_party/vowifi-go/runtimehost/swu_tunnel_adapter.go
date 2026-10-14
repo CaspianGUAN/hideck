@@ -45,7 +45,7 @@ func newSWUTunnelAdapter(config swuTunnelAdapterConfig) *swuTunnelAdapter {
 	}
 }
 
-func (adapter *swuTunnelAdapter) Connect(ctx context.Context) error {
+func (adapter *swuTunnelAdapter) Connect(ctx context.Context) (err error) {
 	adapter.connectMu.Lock()
 	defer adapter.connectMu.Unlock()
 	if ctx == nil {
@@ -56,9 +56,15 @@ func (adapter *swuTunnelAdapter) Connect(ctx context.Context) error {
 		cancel()
 		return err
 	}
-	defer adapter.finishConnect(cancel)
+	// An established SWu session inherits connectCtx. Shutdown owns that
+	// context after success; only failed establishment may cancel it here.
+	defer func() {
+		if err != nil {
+			adapter.finishConnect(cancel)
+		}
+	}()
 
-	err := adapter.connectOnce(connectCtx)
+	err = adapter.connectOnce(connectCtx)
 	if !epdg.ShouldRetryFreshTunnel(connectCtx, err) {
 		return err
 	}
@@ -66,7 +72,8 @@ func (adapter *swuTunnelAdapter) Connect(ctx context.Context) error {
 	// A new session (what the UI reconnect button does) usually succeeds.
 	logging.Info("SWu first ePDG wait timed out; retrying with a fresh tunnel",
 		"device", adapter.deviceID)
-	return adapter.connectOnce(connectCtx)
+	err = adapter.connectOnce(connectCtx)
+	return err
 }
 
 func (adapter *swuTunnelAdapter) connectOnce(ctx context.Context) error {
@@ -89,6 +96,7 @@ func (adapter *swuTunnelAdapter) Shutdown() {
 	}
 	adapter.closed = true
 	cancel := adapter.connectCancel
+	adapter.connectCancel = nil
 	session := adapter.activeSession
 	adapter.activeSession = nil
 	adapter.lifecycleMu.Unlock()

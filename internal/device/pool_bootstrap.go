@@ -664,9 +664,12 @@ func (p *Pool) AddWorkerFromConfig(devCfg config.DeviceConfig) (*Worker, error) 
 	}
 
 	if !qmiWorkerRegistered {
+		transition := p.policyTransitionFor(devCfg.ID)
+		transition.Lock()
 		p.mu.Lock()
 		p.workers[devCfg.ID] = w
 		p.mu.Unlock()
+		transition.Unlock()
 	}
 	w.uimIndicationsReady.Store(true)
 	if w.Config.ConnectHoldRF {

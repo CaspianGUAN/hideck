@@ -1,0 +1,3 @@
+#!/bin/sh
+# Required fnOS hook. Data retention/removal belongs to the platform's uninstall flow.
+exit 0

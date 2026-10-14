@@ -141,10 +141,16 @@ func TestResolveEmbeddedCarrierPresets(t *testing.T) {
 	if extra := AdditionalPDNs(vodafoneUK); len(extra) != 1 || extra[0].APN != "xcap" {
 		t.Fatalf("vodafone uk extra PDN = %+v", extra)
 	}
+	if spark := ResolveEffectiveCarrierConfig("530", "05"); spark.PresetID != "spark_nz_53005" ||
+		!spark.WithholdDeviceIdentity || !CarrierPlanFromEffectiveConfig(spark).Device.Withhold ||
+		!spark.KeepChildSAOnRekeyDecline || !CarrierPlanFromEffectiveConfig(spark).IKE.KeepChildSAOnRekeyDecline {
+		t.Fatalf("spark nz = %+v", spark)
+	}
 	lebaraUK := ResolveEffectiveCarrierConfig("234", "87")
 	if lebaraUK.PresetID != "lebara_uk_23487" || lebaraUK.DeviceModel != "rmx3366" ||
 		lebaraUK.EPDGAddr != "epdg.epc.mnc087.mcc234.pub.3gppnetwork.org" ||
-		lebaraUK.EPDGAddrSource != "standard" ||
+		lebaraUK.EPDGAddrSource != "standard" || lebaraUK.IKERekeyIntervalSeconds != 9000 ||
+		lebaraUK.WithholdDeviceIdentity || lebaraUK.KeepChildSAOnRekeyDecline ||
 		lebaraUK.IMSRegisterTemplate.ID != "lebara_uk_23487" {
 		t.Fatalf("lebara uk = %+v", lebaraUK)
 	}

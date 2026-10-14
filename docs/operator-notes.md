@@ -48,6 +48,21 @@
 - 国家代理按活 IMSI 的 MCC：`23487` 走 GB。人在国内必须走英国代理。
 - 真卡验收前：IKE/ESP 仍可能要按日志改。余额查询未做自动短码（走 Lebara App）。
 
+## Spark NZ（530/05）
+
+- 预设在首次 IKE_AUTH 中不主动发送设备身份；如果网侧明确请求，则在网络认证通过后回复可用的 IMEI。已建立的 IKE SA 上也支持 INFORMATIONAL 设备身份请求。
+- 预设在 CHILD_SA rekey 收到 `NO_ADDITIONAL_SAS` 时保留当前 CHILD_SA。这是 Spark 兼容策略，不是所有运营商的默认行为。
+- 两个开关均可通过 `config/carrier_overrides.yaml` 显式关闭；不填写则继承预设。修改后需重启服务并重新建立会话。例如：
+
+  ```yaml
+  carrier_overrides:
+    "53005":
+      withhold_device_identity: false
+      keep_child_sa_on_rekey_decline: false
+  ```
+
+- 自动化测试覆盖身份请求编码、认证门控、发送失败和配置覆盖；不替代 Spark、VOXI 或其他运营商的真卡验收。
+
 ## 德国 O2（262/03、262/07）
 
 - 预设已有：`O2_de_26203`、`O2_de_26207_alias`。ePDG 用 3GPP 名 `epdg.epc.mnc003.mcc262.pub.3gppnetwork.org` / `mnc007`。

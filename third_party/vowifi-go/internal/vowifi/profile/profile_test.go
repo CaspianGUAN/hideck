@@ -9,13 +9,13 @@ import (
 
 func TestNormalizeAndBuild(t *testing.T) {
 	got, err := Build(Profile{
-		IMSI: " 234102356143376 ", MCC: " 234 ", MNC: " 10 ",
+		ICCID: " 8944100000000000001 ", IMSI: " 234102356143376 ", MCC: " 234 ", MNC: " 10 ",
 		IMEI: " 123 ", SMSC: " +447785016005 ", IMSDomain: " sips:IMS.Example;transport=tcp ",
 	}, " fallback-agent ")
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
-	if got.IMSI != "234102356143376" || got.MCC != "234" || got.MNC != "10" {
+	if got.ICCID != "8944100000000000001" || got.IMSI != "234102356143376" || got.MCC != "234" || got.MNC != "10" {
 		t.Fatalf("Build() identity = %+v", got)
 	}
 	if got.UserAgent != "fallback-agent" || got.IMSDomain != "IMS.Example" {

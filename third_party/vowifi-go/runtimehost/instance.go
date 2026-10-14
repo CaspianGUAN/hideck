@@ -107,6 +107,7 @@ func (i *Instance) Stop(ctx context.Context) error {
 		state.TunnelReady = false
 		state.IMSReady = false
 		state.SMSReady = false
+		state.SMSRXPending = false
 		state.SMSMOReady = false
 		state.SMSHealthReady = false
 		state.LastReason = "stopped"
@@ -151,6 +152,7 @@ func (i *Instance) Obs() map[string]interface{} {
 		"sms_ready":        st.SMSReady,
 		"sms_mo_ready":     st.SMSMOReady,
 		"sms_health_ready": st.SMSHealthReady,
+		"sms_rx_pending":   st.SMSRXPending,
 		"session_state":    st.SessionState,
 		"ims_state":        st.IMSState,
 		"epdg":             st.EPDGAddress,
@@ -212,6 +214,7 @@ func (i *Instance) updateTunnelState(sessionState string) {
 			state.IMSState = "failed"
 			state.IMSReady = false
 			state.SMSReady = false
+			state.SMSRXPending = false
 			state.SMSMOReady = false
 			state.SMSHealthReady = false
 			state.RegStatus = 0
@@ -240,6 +243,7 @@ func (i *Instance) markIMSRegistered() {
 		state.IMSState = "registered"
 		state.IMSReady = true
 		state.SMSReady = false
+		state.SMSRXPending = true
 		state.SMSMOReady = false
 		state.SMSReadyReason = "IMS SMS readiness has not been reported"
 		state.RegStatus = 1
@@ -255,6 +259,7 @@ func (i *Instance) updateSMSReadiness(readiness SMSReadiness) {
 }
 
 func applySMSReadiness(state *State, readiness SMSReadiness) {
+	state.SMSRXPending = readiness.Registered && readiness.ReceiverPending && !readiness.Ready && !readiness.HealthReady
 	state.SMSReady = state.IMSReady && readiness.Ready
 	state.SMSMOReady = state.IMSReady && readiness.MOReady
 	state.SMSHealthReady = readiness.Registered && (readiness.Ready || readiness.HealthReady)
@@ -268,6 +273,9 @@ func applySMSReadiness(state *State, readiness SMSReadiness) {
 	if state.IMSReady {
 		state.Phase = "ims_ready"
 		state.LastEvent = "sms_unavailable"
+		if state.SMSRXPending {
+			state.LastEvent = "sms_pending"
+		}
 	}
 }
 
@@ -299,6 +307,7 @@ func (i *Instance) setIMSFailure(err error) {
 		state.DataPlaneUp = false
 		state.IMSReady = false
 		state.SMSReady = false
+		state.SMSRXPending = false
 		state.SMSMOReady = false
 		state.SMSHealthReady = false
 		state.RegStatus = 0
@@ -318,6 +327,7 @@ func (i *Instance) setIMSRefreshFailure(err error) {
 		state.LastReason = "IMS registration refresh failed"
 		state.IMSReady = false
 		state.SMSReady = false
+		state.SMSRXPending = false
 		state.SMSMOReady = false
 		state.SMSHealthReady = false
 		state.RegStatus = 0
@@ -339,6 +349,7 @@ func (i *Instance) setTunnelControlFailure(err error) {
 		state.DataPlaneUp = false
 		state.IMSReady = false
 		state.SMSReady = false
+		state.SMSRXPending = false
 		state.SMSMOReady = false
 		state.SMSHealthReady = false
 		state.RegStatus = 0
@@ -360,6 +371,7 @@ func (i *Instance) setTunnelReauthenticationRequired(err error) {
 		state.DataPlaneUp = false
 		state.IMSReady = false
 		state.SMSReady = false
+		state.SMSRXPending = false
 		state.SMSMOReady = false
 		state.SMSHealthReady = false
 		state.RegStatus = 0

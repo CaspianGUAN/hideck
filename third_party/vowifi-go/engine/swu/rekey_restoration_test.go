@@ -46,8 +46,9 @@ func TestGenerateIKESARekeyKeysUsesExplicitInputsWithoutMutation(t *testing.T) {
 	}
 }
 
-func TestBuildChildSARekeyPayloadsUsesRemoteSPIAndLegacyOrder(t *testing.T) {
+func TestBuildChildSARekeyPayloadsUsesInboundSPIAndLegacyOrder(t *testing.T) {
 	session := NewSession(&Config{})
+	session.espLocalSPI = 0x0a0b0c0d
 	session.espRemoteSPI = 0x50607080
 	tsi, tsr := buildTrafficSelectorsForIPStack([]byte{10, 0, 0, 2})
 	payloads := session.buildChildSARekeyPayloads(childSARekeyRequest{
@@ -60,8 +61,8 @@ func TestBuildChildSARekeyPayloadsUsesRemoteSPIAndLegacyOrder(t *testing.T) {
 		}
 	}
 	notify := payloads[2].(*ikev2.EncryptedPayloadNotify)
-	if got := binary.BigEndian.Uint32(notify.SPI); got != session.espRemoteSPI {
-		t.Fatalf("REKEY_SA SPI = %08x, want remote SPI %08x", got, session.espRemoteSPI)
+	if got := binary.BigEndian.Uint32(notify.SPI); got != session.espLocalSPI {
+		t.Fatalf("REKEY_SA SPI = %08x, want our inbound SPI %08x", got, session.espLocalSPI)
 	}
 }
 

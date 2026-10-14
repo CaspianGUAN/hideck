@@ -21,7 +21,9 @@ import (
 	"github.com/yibaiba/hideck/internal/db"
 	"github.com/yibaiba/hideck/internal/esim"
 	mbimcore "github.com/yibaiba/hideck/internal/mbim"
+	"github.com/yibaiba/hideck/internal/mbn"
 	"github.com/yibaiba/hideck/internal/modem"
+	modemvoicehost "github.com/yibaiba/hideck/internal/modemvoice/host"
 	"github.com/yibaiba/hideck/internal/pcsc"
 	"github.com/yibaiba/hideck/internal/proxy/server"
 	qmicore "github.com/yibaiba/hideck/internal/qmi"
@@ -174,8 +176,10 @@ type Worker struct {
 }
 
 type Pool struct {
-	workers    map[string]*Worker
-	rebuilding map[string]bool // 标记设备是否正在重载
+	mbnService      *mbn.Service
+	outboundLimiter OutboundLimiter
+	workers         map[string]*Worker
+	rebuilding      map[string]bool // 标记设备是否正在重载
 	// rebuildAttempt 记录每个设备最近一次 AddWorkerFromConfig 尝试的递增 token。
 	// 用于让启动看门狗超时强制释放 rebuilding 后，滞后完成的旧启动流程能识别自己
 	// 已被新一轮尝试取代，从而放弃注册而不是用过期路径覆盖最新状态。
@@ -193,6 +197,8 @@ type Pool struct {
 	cfg                       *config.Config
 	notifier                  Notifier
 	mu                        sync.RWMutex
+	policyTransitionsMu       sync.Mutex
+	policyTransitions         map[string]*policyTransition
 	ctx                       context.Context
 	cancel                    context.CancelFunc
 	dataConnectHandlersMu     sync.RWMutex
@@ -201,12 +207,15 @@ type Pool struct {
 	inboundSMSHandlers        []InboundSMSHandler
 	rescanAndReconnectForTest func() error
 
-	voiceGateway          *voicehost.Gateway
-	volteCtl              *volte.Controller
-	nativeVoLTEScheduleMu sync.Mutex
-	nativeVoLTEScheduled  map[string]struct{}
-	atPortMu              sync.Mutex
-	atPortLocks           map[string]*sync.Mutex
+	voiceGateway           *voicehost.Gateway
+	volteCtl               *volte.Controller
+	modemVoiceCtl          *modemvoicehost.Controller
+	nativeVoLTEScheduleMu  sync.Mutex
+	nativeVoLTEScheduled   map[string]*nativeVoLTEStart
+	nativeVoLTETransitions map[string]*nativeVoLTETransition
+	atPortMu               sync.Mutex
+	atPortLocks            map[string]chan struct{}
+	openATSession          func(string) (atSerialSession, error)
 
 	// VoWiFi host 侧整合（多实例）
 	vowifiHost         *vowifihost.Manager
@@ -287,13 +296,15 @@ func NewPoolWithDynamicInterfaceMapper(cfg *config.Config, mapper DynamicInterfa
 		runtimeQMIAttachments:  make(map[string]config.DeviceConfig),
 		vowifiMWI:              make(map[string]VoWiFiMWIState),
 		smscCache:              make(map[string]string),
-		atPortLocks:            make(map[string]*sync.Mutex),
+		atPortLocks:            make(map[string]chan struct{}),
+		openATSession:          openDeviceATSession,
 	}
 	p.transportRecovery = NewTransportRecoveryController(p)
 	p.voWiFiHost().ConfigureAdapter(p)
 	p.voWiFiHost().ConfigureRuntimeRecycleHandler(p.handleVoWiFiRuntimeRecycle)
 	p.voWiFiHost().ConfigureRuntimeDependencies(p.GetVoiceGateway(), vowifiDeliveryStore{}, poolVoWiFiRuntimeDispatcher{pool: p})
 	p.volteCtl = volte.NewController(p)
+	p.modemVoiceCtl = p.newModemVoiceController()
 
 	return p
 }
@@ -347,6 +358,9 @@ func (p *Pool) registerWorkerStarting(worker *Worker) error {
 	if p == nil || worker == nil || strings.TrimSpace(worker.ID) == "" {
 		return fmt.Errorf("worker_nil")
 	}
+	transition := p.policyTransitionFor(worker.ID)
+	transition.Lock()
+	defer transition.Unlock()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if current := p.workers[worker.ID]; current != nil && current != worker {
@@ -363,11 +377,15 @@ func (p *Pool) removeWorkerRegistrationIfCurrent(worker *Worker) {
 	if p == nil || worker == nil || strings.TrimSpace(worker.ID) == "" {
 		return
 	}
+	transition := p.policyTransitionFor(worker.ID)
+	transition.Lock()
+	defer transition.Unlock()
 	p.mu.Lock()
 	if current := p.workers[worker.ID]; current == worker {
 		delete(p.workers, worker.ID)
 	}
 	p.mu.Unlock()
+	p.cancelNativeVoLTEWorkerStart(worker)
 }
 
 func (w *Worker) IncStreamSub() {
@@ -736,6 +754,12 @@ func (w *Worker) refreshIdentityLive(ctx context.Context, reason string) (liveSI
 	}
 	identityChangedForSPN := (iccid != "" && iccid != strings.TrimSpace(w.state.Identity.ICCID)) ||
 		(imsi != "" && imsi != strings.TrimSpace(w.state.Identity.IMSI))
+	// Physical swaps do not necessarily pass through the eSIM transition hook.
+	// Retain a generation change even if the original ICCID later returns.
+	if iccid != "" && w.state.Identity.ICCID != "" &&
+		normalizeSIMIdentityForCompare(iccid) != normalizeSIMIdentityForCompare(w.state.Identity.ICCID) {
+		w.state.Identity.Generation++
+	}
 	if iccid != "" {
 		w.state.Identity.ICCID = iccid
 	}
@@ -1143,23 +1167,59 @@ func (p *Pool) ForceRebuildingForTest(deviceID string) {
 
 // AbandonDevice 作废该设备的恢复/启动并拆掉 Worker。
 // 必须真正取消恢复 goroutine，否则删后重加同一 ID 会被旧循环拆掉。
-func (p *Pool) AbandonDevice(deviceID string) {
+func (p *Pool) AbandonDevice(deviceID string) error {
 	deviceID = strings.TrimSpace(deviceID)
 	if p == nil || deviceID == "" {
-		return
+		return nil
 	}
 	p.abandonModemRebootRecovery(deviceID)
+	p.clearESIMSwitch(deviceID)
+	transition := p.policyTransitionFor(deviceID)
+	transition.Lock()
+	transition.switchEpoch++
+	transition.Unlock()
 	p.mu.Lock()
 	p.beginRebuildAttemptLocked(deviceID)
 	delete(p.rebuilding, deviceID)
 	p.mu.Unlock()
-	if err := p.RemoveWorker(deviceID); err != nil && !strings.Contains(err.Error(), "设备未找到") {
-		logger.Warn("删除设备时停止 Worker 失败", "device", deviceID, "err", err)
+	if err := p.RemoveWorker(deviceID); err != nil && !errors.Is(err, ErrWorkerNotFound) {
+		return err
 	}
 	p.forgetRuntimeQMIAttachment(deviceID)
+	return nil
 }
 
+var ErrWorkerNotFound = errors.New("设备未找到")
+
+var errWorkerInitializing = errors.New("device worker is initializing")
+
 func (p *Pool) RemoveWorker(deviceID string) error {
+	transition := p.policyTransitionFor(deviceID)
+	for {
+		transition.Lock()
+		if !p.IsESIMSwitching(deviceID) {
+			transition.switchEpoch++
+		}
+		err := p.removeWorkerForPolicyTransition(deviceID)
+		transition.Unlock()
+		if !errors.Is(err, errWorkerInitializing) {
+			return err
+		}
+		// Initialization must be able to publish its Worker while we wait.
+		if !p.waitWorkerInitSettled(deviceID, 10*time.Second) {
+			return fmt.Errorf("设备 %s 正在初始化中，等待停止超时", deviceID)
+		}
+	}
+}
+
+func (p *Pool) removeWorkerForPolicyTransition(deviceID string) error {
+	if err := p.stopModemVoice(deviceID); err != nil {
+		return err
+	}
+	// Cancel and drain startup before removing the hardware it still owns.
+	if err := p.voWiFiHost().Disable(p.ctx, deviceID, "remove_worker", false); err != nil {
+		return err
+	}
 	p.mu.Lock()
 	worker := p.workers[deviceID]
 	alreadyRebuilding := p.rebuilding[deviceID]
@@ -1172,13 +1232,17 @@ func (p *Pool) RemoveWorker(deviceID string) error {
 	p.mu.Unlock()
 
 	if worker == nil && alreadyRebuilding {
-		if !p.waitWorkerInitSettled(deviceID, 10*time.Second) {
-			return fmt.Errorf("设备 %s 正在初始化中，等待停止超时", deviceID)
-		}
-		return p.RemoveWorker(deviceID)
+		return errWorkerInitializing
 	}
 	if worker == nil {
-		return fmt.Errorf("设备未找到")
+		return ErrWorkerNotFound
+	}
+	p.cancelNativeVoLTEWorkerStart(worker)
+	// Retire only local native state: the old QMI transport is stopped below.
+	// No ID-based modem I/O may reach a replacement Worker during teardown.
+	var nativeErr error
+	if p.volteCtl != nil {
+		nativeErr = p.volteCtl.RetireDevice(deviceID)
 	}
 	p.rememberRuntimeQMIAttachment(worker.Config)
 	if !alreadyRebuilding {
@@ -1187,12 +1251,6 @@ func (p *Pool) RemoveWorker(deviceID string) error {
 			delete(p.rebuilding, deviceID)
 			p.mu.Unlock()
 		}()
-	}
-
-	// 移除 Worker 时，使当前设备的 VoWiFi 运行态失效，防止未完成的旧启动例程回写状态
-	p.voWiFiHost().InvalidateRuntime(deviceID, "remove_worker")
-	if p.stopVoWiFiAppForTeardown(p.ctx, deviceID, "remove") {
-		logger.Info("设备移除时强制关闭并清理残留的 VoWiFi 实例", "device", deviceID)
 	}
 
 	worker.stopOnce.Do(func() {
@@ -1232,7 +1290,7 @@ func (p *Pool) RemoveWorker(deviceID string) error {
 			p.lifecycle.MarkOffline(deviceID, "worker_removed")
 		}
 	}
-	return mappingErr
+	return errors.Join(nativeErr, mappingErr)
 }
 
 // qmiWorkerBootstrapDeadline 是 AddWorkerFromConfig 单次执行的硬上限。
@@ -2472,7 +2530,13 @@ func (p *Pool) ShutdownContext(ctx context.Context) error {
 		_ = p.stopVoWiFiAppForTeardown(ctx, devID, "shutdown")
 	}
 
-	mappingErr := p.removeAllDynamicInterfaceMappings(ctx)
+	var voiceErr error
+	if p.modemVoiceCtl != nil {
+		for _, worker := range p.GetAllWorkers() {
+			voiceErr = errors.Join(voiceErr, p.modemVoiceCtl.Disable(ctx, worker.ID))
+		}
+	}
+	mappingErr := errors.Join(voiceErr, p.removeAllDynamicInterfaceMappings(ctx))
 	p.mu.RLock()
 	for _, w := range p.workers {
 		w.stopOnce.Do(func() {

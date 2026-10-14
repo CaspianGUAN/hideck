@@ -184,6 +184,7 @@ func (r *reliableProvisionalRegistrar) writeFinalInvite(request string, remote *
 func (r *reliableProvisionalRegistrar) writeResponse(cfg sipTestResponse) {
 	if sipMethodForTest(cfg.request) == "REGISTER" {
 		cfg.extra += "P-Associated-URI: <sip:+15551234567@ims.example.com>\r\n"
+		cfg.extra += "Contact: " + voiceTestHeader(cfg.request, "Contact") + "\r\n"
 	}
 	response := fmt.Sprintf("SIP/2.0 %d %s\r\nVia: %s\r\nCall-ID: %s\r\nCSeq: %s\r\n%sContent-Length: %d\r\n\r\n%s",
 		cfg.status, imscore.SIPStatusText(cfg.status), voiceTestHeader(cfg.request, "Via"),

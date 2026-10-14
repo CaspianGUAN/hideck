@@ -121,9 +121,10 @@ export const smsService = {
   },
   send(payload: SmsSendPayload) {
     return callService(async () => {
-      const res = await api.post<{ parts_total?: number }>('/sms/send', payload)
+      const res = await api.post<{ parts_total?: number; destination: string }>('/sms/send', payload)
       return {
-        partsTotal: Number(res.data?.parts_total || 0)
+        partsTotal: Number(res.data?.parts_total || 0),
+        destination: res.data.destination
       }
     })
   },

@@ -56,12 +56,16 @@ func TestReleaseFailedRuntimeMakesInstanceRecoverable(t *testing.T) {
 		SessionState: "error", LastErrorClass: "ims",
 		LastReason: "IMS registration refresh failed", LastError: "refresh timeout",
 	}
+	manager.BeginDesiredRecover("wwan0", time.Now())
 
 	if !manager.releaseFailedRuntime("wwan0", instance, state) {
 		t.Fatal("failed runtime was not released")
 	}
 	if manager.Active("wwan0") || !manager.DesiredRecoverable("wwan0") {
 		t.Fatal("released runtime is not eligible for desired-state recovery")
+	}
+	if manager.HasDesiredRecoverState("wwan0") {
+		t.Fatal("failed runtime retained an in-flight recovery from its old generation")
 	}
 	if got := instance.State().SessionState; got != "stopped" {
 		t.Fatalf("instance state = %q, want stopped", got)

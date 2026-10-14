@@ -35,11 +35,13 @@
 - **eSIM** — 下载、启用、停用、重命名、删除；激活码或二维码 / PDF
 - **自动任务与通知** — 按计划执行；Telegram、邮件、Bark、飞书、企微、微信、QQ
 
-协议说明：[VoWiFi](../docs/vowifi-protocol-alignment.md) · [VoLTE](../docs/volte-native.md) · [运营商](../docs/operator-notes.md) · [硬件](../docs/modem-hardware.md)
+协议说明：[VoWiFi](../docs/vowifi-protocol-alignment.md) · [VoLTE](../docs/volte-native.md) · [运营商](../docs/operator-notes.md) · [硬件](../docs/modem-hardware.md) · [模组直拨排障](../docs/modem-voice-troubleshooting.md)
+
+外呼/短信按 SIM 独立限流，重启保留计数：[额度与配置说明](../docs/outbound-limits.md)。
 
 ## 快速开始
 
-推荐 Docker。需要 Linux、curl、Compose、host 网络、USB 权限。镜像已带通话录音用的 AMR/MP3 库。
+推荐 Docker。需要 Linux、curl、Compose、host 网络、USB 权限。镜像已带 ADB、ALSA 工具、AMR/MP3 库和内嵌模组语音资源；宿主机仍需 USB 音频驱动，见[模组直拨依赖](../DOCKERHUB.md#module-voice-dependencies)。
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | sh
@@ -60,6 +62,8 @@ curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | \
 ```
 
 镜像：`yibaiba/hideck:latest`。Compose 使用 `network_mode: host`、`privileged: true`、`/dev`，数据在 `config/`、`data/`、`logs/`。见 [DOCKERHUB.md](../DOCKERHUB.md) 和 [HTTPS / WebRTC](../docs/https-webrtc.md)。
+
+飞牛 fnOS 可使用独立的 [FPK 打包方案](../packaging/fnos/README.md)，复用 Docker 镜像并提供桌面入口和应用持久化目录；仍需 fnOS 真机验收。
 
 ```bash
 docker compose ps
@@ -82,6 +86,10 @@ docker compose logs -f hideck
 
 ## 二进制
 
+安装脚本会补装 ADB、ALSA 和录音依赖，并检查 ADB 能力与宿主机 USB 音频支持。依赖未通过时，即使服务已安装，脚本也会明确报错并返回非零退出码，不会报告完整部署成功；检查不会连接或重启模组。
+
+OpenWrt 默认不装模组直拨依赖，可另装 `hideck-adb` 和 `hideck-modem-voice`。IPK/APK 安装方式及架构匹配见 [OpenWrt 打包说明](../packaging/openwrt/README.md)。
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy-binary.sh | sh
 ```
@@ -101,8 +109,11 @@ curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy-binary.s
 | `hideck_v2.1.23_openwrt_amd64` | OpenWrt x86_64，musl 静态，不压 UPX |
 | `hideck_v2.1.23_openwrt_arm64` | OpenWrt aarch64 |
 | `hideck_v2.1.23_openwrt_armv7` | OpenWrt 32 位 ARM |
+| `hideck_v2.1.23_openwrt_dynamic_amd64` | OpenWrt x86_64，动态 musl，可使用 MP3 编码 |
+| `hideck_v2.1.23_openwrt_dynamic_arm64` | OpenWrt aarch64，动态 musl，可使用 MP3 编码 |
+| `hideck_v2.1.23_openwrt_dynamic_armv7` | OpenWrt 32 位 ARM，动态 musl，可使用 MP3 编码 |
 
-OpenWrt 只用 `openwrt_*`。见 [packaging/openwrt/README.md](../packaging/openwrt/README.md)。
+OpenWrt 只用 `openwrt_*`。包管理附件和二进制安装脚本继续使用静态版本；动态版本需要匹配的运行库，供通话 MP3 录音使用，见 [OpenWrt 打包说明](../packaging/openwrt/README.md#openwrt-dynamic-musl)。
 
 ## 配置
 

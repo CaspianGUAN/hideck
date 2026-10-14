@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+. "$(dirname "$0")/common"
+
+if [ "${wizard_hardware_access:-}" != yes ]; then
+  message='请先确认 HiDeck 的 host 网络、特权容器和 USB 设备访问权限。'
+  report_error "$message"
+  exit 1
+fi
+preflight

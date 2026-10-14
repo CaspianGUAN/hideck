@@ -1,0 +1,12 @@
+From: HiDeck maintainers
+Subject: Use the bundled GoogleTest headers for libzip's friend declaration
+
+zip_writer.h includes gtest_prod.h even in production builds. BoringSSL's
+vendored GoogleTest already supplies this header; no test runtime is linked.
+
+--- a/vendor/CMakeLists.txt
++++ b/vendor/CMakeLists.txt
+@@ -118,1 +118,2 @@
+-include_directories(${CMAKE_CURRENT_BINARY_DIR})
++include_directories(${CMAKE_CURRENT_BINARY_DIR})
++include_directories(${CMAKE_CURRENT_SOURCE_DIR}/boringssl/third_party/googletest/googletest/include)

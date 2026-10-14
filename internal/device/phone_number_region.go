@@ -11,7 +11,10 @@ func (p *Pool) PhoneNumberRegion(deviceID string) string {
 	if p == nil {
 		return ""
 	}
-	worker := p.GetWorker(strings.TrimSpace(deviceID))
+	return phoneNumberRegionForWorker(p.GetWorker(strings.TrimSpace(deviceID)))
+}
+
+func phoneNumberRegionForWorker(worker *Worker) string {
 	if worker == nil {
 		return ""
 	}

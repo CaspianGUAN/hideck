@@ -7,6 +7,34 @@ import (
 	"github.com/warthog618/sms/encoding/ucs2"
 )
 
+func TestBuildSubmitTPDUsUsesInternationalTypeOnlyForExplicitPlus(t *testing.T) {
+	tests := []struct {
+		name string
+		to   string
+		ton  tpdu.TypeOfNumber
+	}{
+		{name: "china national", to: "13800138000", ton: tpdu.TonUnknown},
+		{name: "china international", to: "+8613800138000", ton: tpdu.TonInternational},
+		{name: "britain national", to: "07911123456", ton: tpdu.TonUnknown},
+		{name: "service code", to: "10086", ton: tpdu.TonUnknown},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			encoded, _, err := BuildSubmitTPDUs(test.to, "hello")
+			if err != nil {
+				t.Fatal(err)
+			}
+			part := tpdu.TPDU{Direction: tpdu.MO}
+			if err := part.UnmarshalBinary(encoded[0]); err != nil {
+				t.Fatal(err)
+			}
+			if part.DA.TypeOfNumber() != test.ton || part.DA.Number() != test.to {
+				t.Fatalf("address = %q, TON = %d; want %q, %d", part.DA.Number(), part.DA.TypeOfNumber(), test.to, test.ton)
+			}
+		})
+	}
+}
+
 func TestBuildSubmitTPDUsWithOptionsForcesUCS2(t *testing.T) {
 	tpdus, _, err := BuildSubmitTPDUsWithOptions("10086", "hello", SubmitOptions{Encoding: SMSEncodingUCS2})
 	if err != nil {

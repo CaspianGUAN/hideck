@@ -401,6 +401,26 @@ func (w *Worker) SendSMS(phone, message string) error {
 }
 
 func (w *Worker) SendSMSWithOptions(phone, message string, opts smscodec.SubmitOptions) error {
+	if w == nil || w.Pool == nil {
+		return errors.New("短信发送需要有效的设备池")
+	}
+	release, err := w.Pool.acquireOutboundOperation(w)
+	if err != nil {
+		return err
+	}
+	defer release()
+	check := w.Pool.outboundOwnerCheck(w)
+	if err := w.Pool.authorizeSMS(context.Background(), outboundSMSRequest{Worker: w, To: phone, Text: message, Options: opts}); err != nil {
+		return err
+	}
+	if err := check(); err != nil {
+		return err
+	}
+	return w.sendSMSWithOptions(phone, message, opts)
+}
+
+// sendSMSWithOptions is the CS leg after the shared per-SIM budget was consumed.
+func (w *Worker) sendSMSWithOptions(phone, message string, opts smscodec.SubmitOptions) error {
 	if w.Backend != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 		defer cancel()
@@ -492,13 +512,14 @@ func (w *Worker) processSMSWithIdentity(identity SMSIdentity, message inboundSMS
 	if err := w.persistReceivedSMS(identity, message); err != nil {
 		return fmt.Errorf("保存短信到数据库失败: %w", err)
 	}
-	w.Pool.notifyInboundSMS(InboundSMS{
-		DeviceID: w.ID, ICCID: identity.ICCID, Sender: message.Sender,
+	inbound := InboundSMS{
+		DeviceID: w.ID, ICCID: identity.ICCID, IMSI: identity.IMSI, Sender: message.Sender,
 		Content: message.Content, Time: message.Timestamp,
-	})
+	}
+	w.Pool.notifyInboundSMS(inbound)
 
 	if notifier := w.Pool.getNotifier(); notifier != nil {
-		notifier.NotifySMS(w.ID, message.Sender, message.Content, message.Timestamp)
+		notifySMS(notifier, inbound, "")
 	}
 	return nil
 }

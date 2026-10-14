@@ -51,6 +51,10 @@ type FakeModem struct {
 	UACUnusable   bool
 	manageCalls   []qmi.VoiceManageCallsRequest
 	manageErrs    []error
+	dtmfActions   []string
+	burstDTMFErr  error
+	startDTMFErr  error
+	stopDTMFErr   error
 }
 
 func newFakeModem() *FakeModem {
@@ -305,8 +309,23 @@ func (f *FakeModem) VOICEManageCalls(_ context.Context, _ string, req qmi.VoiceM
 	f.manageErrs = f.manageErrs[1:]
 	return err
 }
-func (f *FakeModem) VOICEBurstDTMF(context.Context, string, uint8, string) error {
-	return nil
+func (f *FakeModem) VOICEBurstDTMF(_ context.Context, _ string, callID uint8, digits string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.dtmfActions = append(f.dtmfActions, fmt.Sprintf("burst:%d:%s", callID, digits))
+	return f.burstDTMFErr
+}
+func (f *FakeModem) VOICEStartContinuousDTMF(_ context.Context, _ string, callID, digit uint8) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.dtmfActions = append(f.dtmfActions, fmt.Sprintf("start:%d:%c", callID, digit))
+	return f.startDTMFErr
+}
+func (f *FakeModem) VOICEStopContinuousDTMF(_ context.Context, _ string, callID uint8) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.dtmfActions = append(f.dtmfActions, fmt.Sprintf("stop:%d", callID))
+	return f.stopDTMFErr
 }
 func (f *FakeModem) OnVoiceStatus(_ string, handler func(*qmi.VoiceAllCallInfo)) error {
 	f.mu.Lock()

@@ -139,7 +139,8 @@ func (r *controlledRejectingRegistrar) serve() {
 		switch sipMethodForTest(request) {
 		case "REGISTER":
 			r.writeResponse(request, remote, 200,
-				"P-Associated-URI: <sip:user@ims.example.com>\r\n")
+				"P-Associated-URI: <sip:user@ims.example.com>\r\n"+
+					"Contact: "+voiceTestHeader(request, "Contact")+"\r\n")
 		case "INVITE":
 			r.invite <- struct{}{}
 			<-r.release

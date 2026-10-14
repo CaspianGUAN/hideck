@@ -55,8 +55,14 @@ func (m *Manager) runtimeStarter() runtimeStartFunc {
 	return runtimehost.Start
 }
 
-func (m *Manager) runtimeStateObserver(deviceID string, readiness *runtimeReadinessTracker) runtimehost.Observer {
+func (m *Manager) runtimeStateObserver(deviceID string, epoch uint64, readiness *runtimeReadinessTracker) runtimehost.Observer {
 	return runtimehost.ObserverFunc(func(_ context.Context, ev runtimehost.Event) {
+		stateMu := m.stateLock(deviceID)
+		stateMu.Lock()
+		defer stateMu.Unlock()
+		if !m.ShouldRun(deviceID, epoch) {
+			return
+		}
 		inst := ev.Session
 		if inst != nil && m.IsCurrentInstance(deviceID, inst) {
 			readiness.Observe(ev)
@@ -81,6 +87,9 @@ func (m *Manager) StartRuntime(ctx context.Context, req RuntimeStartRequest) (Ru
 	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if ctx.Err() != nil || !m.ShouldRun(deviceID, req.Epoch) {
+		return RuntimeStartResult{}, context.Canceled
 	}
 
 	prepared := req.Prepared.Prepared
@@ -123,17 +132,22 @@ func (m *Manager) StartRuntime(ctx context.Context, req RuntimeStartRequest) (Ru
 		ShouldRun: func() bool {
 			return ctx.Err() == nil && m.ShouldRun(deviceID, req.Epoch)
 		},
-		Observer: m.runtimeStateObserver(deviceID, readiness),
+		Observer: m.runtimeStateObserver(deviceID, req.Epoch, readiness),
 	})
 	if err != nil {
 		return RuntimeStartResult{}, err
 	}
 
-	if !m.ClaimStarted(deviceID, req.Epoch, inst) {
+	if ctx.Err() != nil || !m.ClaimStarted(deviceID, req.Epoch, inst) {
 		stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		_ = inst.Stop(stopCtx)
 		cancel()
-		m.ClearStartupStateAndBroadcast(deviceID)
+		return RuntimeStartResult{Instance: inst, Stale: true}, nil
+	}
+	stateMu := m.stateLock(deviceID)
+	stateMu.Lock()
+	defer stateMu.Unlock()
+	if !m.ShouldRun(deviceID, req.Epoch) || !m.IsCurrentInstance(deviceID, inst) {
 		return RuntimeStartResult{Instance: inst, Stale: true}, nil
 	}
 	readiness.Observe(runtimehost.Event{

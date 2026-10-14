@@ -39,9 +39,13 @@ func (d poolVoWiFiRuntimeDispatcher) Dispatch(ctx context.Context, e eventhost.E
 	}
 	recorder := vowifiSMSHistoryRecorder{pool: d.pool}
 	var recordResult vowifiSMSRecordResult
+	var receivedOn SMSIdentity
 	switch v := e.(type) {
 	case eventhost.SMSReceived:
-		res, err := recorder.RecordReceived(v)
+		// One snapshot of the receiving SIM serves observers and notifiers,
+		// so a profile switch while the message is stored cannot split them.
+		receivedOn = recorder.resolveReceivingIdentity(v.DevID)
+		res, err := recorder.recordReceived(v, receivedOn)
 		applyVoWiFiSMSMemoryPressure(func(full bool) {
 			d.pool.SetVoWiFiSMSMemoryFull(v.DevID, full)
 		}, err, res)
@@ -51,7 +55,7 @@ func (d poolVoWiFiRuntimeDispatcher) Dispatch(ctx context.Context, e eventhost.E
 		recordResult = res
 		if res.Stored && !v.Incomplete {
 			d.pool.notifyInboundSMS(InboundSMS{
-				DeviceID: v.DevID, ICCID: recorder.resolveICCID(v.DevID),
+				DeviceID: v.DevID, ICCID: receivedOn.ICCID, IMSI: receivedOn.IMSI,
 				Sender: v.Sender, Content: v.Content, Time: v.Time,
 			})
 		}
@@ -88,11 +92,10 @@ func (d poolVoWiFiRuntimeDispatcher) Dispatch(ctx context.Context, e eventhost.E
 			logger.Info("VoWiFi 短信重复（通过数据库去重兜底），不进行重复通知推送", "device", sms.DevID, "sender", sms.Sender)
 			return
 		}
-		if withSource, ok := notifier.(SMSSourceNotifier); ok {
-			withSource.NotifySMSWithSource(sms.DevID, sms.Sender, sms.Content, "VoWiFi", sms.Time)
-		} else {
-			notifier.NotifySMS(sms.DevID, sms.Sender, sms.Content, sms.Time)
-		}
+		notifySMS(notifier, InboundSMS{
+			DeviceID: sms.DevID, ICCID: receivedOn.ICCID, IMSI: receivedOn.IMSI,
+			Sender: sms.Sender, Content: sms.Content, Time: sms.Time,
+		}, "VoWiFi")
 	}
 
 	logNotify, ok := e.(eventhost.LogNotify)

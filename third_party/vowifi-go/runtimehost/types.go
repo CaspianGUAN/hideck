@@ -46,6 +46,7 @@ type State struct {
 	EPDGAddress    string
 	SMSReadyReason string
 	SMSHealthReady bool
+	SMSRXPending   bool
 	SMSMOReady     bool
 }
 
@@ -149,15 +150,16 @@ type registrationFailureSource interface {
 }
 
 type SMSReadiness struct {
-	Registered     bool
-	ProfileReady   bool
-	TransportReady bool
-	ReceiverReady  bool
-	SMSCPresent    bool
-	Ready          bool
-	MOReady        bool
-	HealthReady    bool
-	Reason         string
+	ReceiverPending bool
+	Registered      bool
+	ProfileReady    bool
+	TransportReady  bool
+	ReceiverReady   bool
+	SMSCPresent     bool
+	Ready           bool
+	MOReady         bool
+	HealthReady     bool
+	Reason          string
 }
 
 type smsReadinessSource interface {

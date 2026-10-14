@@ -51,3 +51,14 @@ func TestUpstreamProxyPersistenceOnlyBlocksAssociationFailures(t *testing.T) {
 		t.Fatal("successful probe must not block persistence")
 	}
 }
+
+func TestUpstreamProxyReportsUnknownEgressWithoutBlockingPersistence(t *testing.T) {
+	result := upstreamproxy.ProbeResult{Egress: &upstreamproxy.EgressProbe{Error: "出口检测超时"}}
+	status, message := upstreamProxySaveResult("已保存", result, nil)
+	if status != "warning" || !strings.Contains(message, "出口检测超时") {
+		t.Fatalf("missing egress warning: %s %s", status, message)
+	}
+	if upstreamProxyProbeBlocksPersistence(result, nil) {
+		t.Fatal("HTTPS diagnostics must not gate IMS routing or proxy persistence")
+	}
+}

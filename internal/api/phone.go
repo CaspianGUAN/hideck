@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/nyaruka/phonenumbers/v2"
 	"github.com/yibaiba/hideck/internal/device"
 	"github.com/yibaiba/hideck/internal/phone"
 	"github.com/yibaiba/hideck/pkg/logger"
@@ -40,6 +41,7 @@ type phoneRefreshRequest struct {
 func (s *Server) registerPhoneRoutes(api *gin.RouterGroup) {
 	api.GET("/phone/devices", s.handlePhoneDevices)
 	api.POST("/phone/media", s.handlePhoneMedia)
+	api.DELETE("/phone/media/:media_id", s.handlePhoneMediaCancel)
 	api.POST("/phone/calls", s.handlePhoneStartCall)
 	api.GET("/phone/calls/active", s.handlePhoneActiveCalls)
 	api.POST("/phone/calls/:call_id/answer", s.handlePhoneAnswer)
@@ -68,7 +70,9 @@ func (s *Server) handlePhoneDevices(c *gin.Context) {
 				logger.Warn("电话设备列表识别 Lebara UK 射频策略失败", "device", worker.ID, "err", err)
 			}
 			voice := map[string]interface{}{}
-			if s.pool.IsNativeVoLTE(worker.ID) {
+			if s.pool.IsModemVoice(worker.ID) {
+				voice = s.pool.ModemVoiceController().DeviceStatus(worker.ID)
+			} else if s.pool.IsNativeVoLTE(worker.ID) {
 				if ctl := s.pool.NativeVoLTEController(); ctl != nil {
 					for key, value := range ctl.DeviceStatus(worker.ID) {
 						voice[key] = value
@@ -98,6 +102,9 @@ func (s *Server) handlePhoneDevices(c *gin.Context) {
 			}
 			if region := s.phoneNumberRegion(worker.ID); region != "" {
 				item["phone_region"] = region
+				if code := phonenumbers.GetCountryCodeForRegion(region); code != 0 {
+					item["phone_country_code"] = code
+				}
 			}
 			if recoverSnap := s.pool.LebaraUKIdentityRecoverSnapshot(worker.ID); recoverSnap.Status != "" {
 				item["lebara_identity_status"] = recoverSnap.Status
@@ -128,6 +135,17 @@ func (s *Server) handlePhoneMedia(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, answer)
+}
+
+func (s *Server) handlePhoneMediaCancel(c *gin.Context) {
+	if !s.requirePhone(c) {
+		return
+	}
+	if err := s.phone.CancelMedia(s.auth.Username, c.Param("media_id"), phoneLease(c)); err != nil {
+		s.respondPhoneError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func (s *Server) handlePhoneStartCall(c *gin.Context) {
@@ -317,6 +335,9 @@ func (s *Server) requirePhone(c *gin.Context) bool {
 }
 
 func (s *Server) respondPhoneError(c *gin.Context, err error) {
+	if respondOutboundLimit(c, err) {
+		return
+	}
 	message := err.Error()
 	status := http.StatusBadRequest
 	code := "phone_error"

@@ -285,7 +285,6 @@ func (s *Session) loopESPToTUN(transport ipsec.Transport, tun TUN) {
 				transport = replacement
 				continue
 			}
-			s.markInboundActivity()
 			s.tunStats.espIn.Add(1)
 			inner, spi, err := s.decapsulateOuterESP(raw)
 			s.tunStats.lastInSPI.Store(spi)

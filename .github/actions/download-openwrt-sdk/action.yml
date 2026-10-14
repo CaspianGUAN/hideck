@@ -1,0 +1,54 @@
+name: Download verified OpenWrt SDK
+description: Resume interrupted downloads and cache only SHA-256 verified archives
+inputs:
+  sdk-id:
+    required: true
+    description: Entry ID in packaging/openwrt/sdk-matrix.json
+outputs:
+  archive:
+    value: ${{ steps.metadata.outputs.archive }}
+    description: Verified SDK archive path
+  cache-dir:
+    value: ${{ steps.metadata.outputs.cache-dir }}
+    description: Directory for the Docker SDK cache context
+  url:
+    value: ${{ steps.metadata.outputs.url }}
+    description: Official SDK URL
+  sha256:
+    value: ${{ steps.metadata.outputs.sha256 }}
+    description: Pinned archive digest
+runs:
+  using: composite
+  steps:
+    - id: metadata
+      shell: bash
+      env:
+        SDK_ID: ${{ inputs.sdk-id }}
+      run: |
+        set -euo pipefail
+        entry=$(jq -cer --arg id "$SDK_ID" '[.include[] | select(.id == $id)] | if length == 1 then .[0] else error("unknown or duplicate SDK ID") end' packaging/openwrt/sdk-matrix.json)
+        digest=$(jq -r .sha256 <<<"$entry")
+        [[ "$digest" =~ ^[a-f0-9]{64}$ ]]
+        url="https://downloads.openwrt.org/releases/$(jq -r .release <<<"$entry")/targets/$(jq -r .target <<<"$entry")/$(jq -r .sdk <<<"$entry")"
+        cache_dir="$RUNNER_TEMP/hideck-sdk-$digest"
+        echo "sha256=$digest" >> "$GITHUB_OUTPUT"
+        echo "url=$url" >> "$GITHUB_OUTPUT"
+        echo "cache-dir=$cache_dir" >> "$GITHUB_OUTPUT"
+        echo "archive=$cache_dir/$digest.tar.zst" >> "$GITHUB_OUTPUT"
+    - uses: actions/cache/restore@v4
+      id: cache
+      with:
+        path: ${{ steps.metadata.outputs.archive }}
+        key: openwrt-sdk-verified-v1-${{ runner.os }}-${{ steps.metadata.outputs.sha256 }}
+    - name: Download or verify restored archive
+      shell: bash
+      env:
+        SDK_URL: ${{ steps.metadata.outputs.url }}
+        SDK_SHA256: ${{ steps.metadata.outputs.sha256 }}
+        SDK_CACHE_DIR: ${{ steps.metadata.outputs.cache-dir }}
+      run: python3 packaging/openwrt/download_sdk.py --url "$SDK_URL" --sha256 "$SDK_SHA256" --cache-dir "$SDK_CACHE_DIR"
+    - uses: actions/cache/save@v4
+      if: steps.cache.outputs.cache-hit != 'true'
+      with:
+        path: ${{ steps.metadata.outputs.archive }}
+        key: ${{ steps.cache.outputs.cache-primary-key }}

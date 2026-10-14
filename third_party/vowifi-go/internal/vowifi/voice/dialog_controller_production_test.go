@@ -91,7 +91,8 @@ func (r *inboundDialogRegistrar) serve() {
 			case r.client <- remote:
 			default:
 			}
-			r.writeResponse(message, remote, 200, "P-Associated-URI: <sip:user@ims.example.com>\r\n", "")
+			r.writeResponse(message, remote, 200, "P-Associated-URI: <sip:user@ims.example.com>\r\n"+
+				"Contact: "+voiceTestHeader(message, "Contact")+"\r\n", "")
 		case strings.HasPrefix(message, "BYE "):
 			r.writeResponse(message, remote, 200, "", "")
 		case strings.HasPrefix(message, "SIP/2.0 "):

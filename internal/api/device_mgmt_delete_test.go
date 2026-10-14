@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +11,49 @@ import (
 	"github.com/yibaiba/hideck/internal/config"
 	"github.com/yibaiba/hideck/internal/device"
 )
+
+func TestDeleteManagedDevicePreservesConfigOnStopFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	path := writeDeviceMgmtLimitConfig(t, "devices:\n  - id: wwan0\n    device_backend: qmi\n")
+	if err := config.InitGlobalManager(path); err != nil {
+		t.Fatal(err)
+	}
+	for _, fail := range []bool{true, false} {
+		rec := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(rec)
+		ctx.Params = gin.Params{{Key: "device_id", Value: "wwan0"}}
+		detached := false
+		deleteManagedDevice(ctx, path, managedDeviceDeleteOps{
+			abandon: func(id string) error {
+				if id != "wwan0" {
+					t.Fatal("wrong device", id)
+				}
+				if fail {
+					return errors.New("modem hangup failed")
+				}
+				return nil
+			},
+			detach: func(string) error {
+				detached = true
+				return nil
+			},
+		})
+		want := http.StatusOK
+		if fail {
+			want = http.StatusInternalServerError
+		}
+		if rec.Code != want {
+			t.Fatalf("status=%d want=%d body=%s", rec.Code, want, rec.Body.String())
+		}
+		got, _ := config.GetDeviceByID("wwan0")
+		if (got != nil) != fail {
+			t.Fatalf("config preserved=%v stop failed=%v", got != nil, fail)
+		}
+		if detached == fail {
+			t.Fatalf("binding detached=%v stop failed=%v", detached, fail)
+		}
+	}
+}
 
 func TestHandleDeviceMgmtDeleteDeviceRemovesConfigWhileRecovering(t *testing.T) {
 	gin.SetMode(gin.TestMode)

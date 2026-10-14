@@ -38,6 +38,8 @@ func BuildSWUConfig(cfg SessionConfig) *swu.Config {
 		IPStack:                   plan.EPDG.IPStackType,
 		EnableDeviceIdentitySpoof: plan.Device.IdentityEnabled,
 		DeviceIdentityIMEI:        firstNonEmpty(plan.Device.IdentityIMEI, prepared.Profile.IMEI),
+		WithholdDeviceIdentity:    plan.Device.Withhold,
+		KeepChildSAOnRekeyDecline: plan.IKE.KeepChildSAOnRekeyDecline,
 		IKEIdentityMode:           plan.IKE.IKEIdentityMode,
 		AKAChallengeMode:          plan.IKE.AKAChallengeMode,
 		AKAIdentityMode:           plan.IKE.AKAIdentityMode,

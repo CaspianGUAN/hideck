@@ -122,7 +122,7 @@ async function sendDigit(digit: string) {
         <button
           type="button"
           class="call-action"
-          :disabled="!connected || callEnding || call.read_only"
+          :disabled="!phone.canSendDTMF"
           :aria-label="connected ? (keypadOpen ? '关闭拨号键盘' : '打开拨号键盘') : '接通后可发送拨号音'"
           :aria-pressed="keypadOpen"
           @click="toggleKeypad"
@@ -143,7 +143,7 @@ async function sendDigit(digit: string) {
     </div>
     <div v-if="keypadOpen && connected" class="call-bar-keypad">
       <p aria-live="polite">发送 DTMF{{ lastDTMF ? `：${lastDTMF}` : '' }}</p>
-      <PhoneDialPad :disabled="callEnding" @digit="sendDigit" />
+      <PhoneDialPad :disabled="!phone.canSendDTMF" @digit="sendDigit" />
     </div>
   </aside>
 </template>

@@ -78,6 +78,7 @@ func (s *Store) BeginStart(deviceID string) StartClaim {
 		return StartClaim{Epoch: slot.epoch, Starting: true}
 	}
 	slot.starting = true
+	slot.epoch++
 	slot.lastErr = ""
 	slot.updatedAt = time.Now()
 	return StartClaim{Epoch: slot.epoch, Accepted: true}
@@ -162,7 +163,7 @@ func (s *Store) ClearStartupState(deviceID string) bool {
 	}
 	slot.state = runtimehost.State{}
 	slot.updatedAt = time.Now()
-	if slot.instance == nil && !slot.starting && slot.lastErr == "" {
+	if slot.epoch == 0 && slot.instance == nil && !slot.starting && slot.lastErr == "" {
 		delete(s.slots, deviceID)
 	}
 	return true

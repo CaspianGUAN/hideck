@@ -1,6 +1,9 @@
 package phone
 
-import "fmt"
+import (
+	"fmt"
+	"github.com/yibaiba/hideck/pkg/g711"
+)
 
 func DecodePCMU(payload []byte) []int16 {
 	return decodePCMU(payload)
@@ -11,19 +14,11 @@ func EncodePCMU(pcm []int16) []byte {
 }
 
 func decodePCMU(payload []byte) []int16 {
-	pcm := make([]int16, len(payload))
-	for index, sample := range payload {
-		pcm[index] = muLawToPCM(sample)
-	}
-	return pcm
+	return g711.Decode(payload)
 }
 
 func encodePCMU(pcm []int16) []byte {
-	payload := make([]byte, len(pcm))
-	for index, sample := range pcm {
-		payload[index] = pcmToMuLaw(sample)
-	}
-	return payload
+	return g711.Encode(pcm)
 }
 
 func resamplePCM(pcm []int16, fromRate, toRate int) ([]int16, error) {

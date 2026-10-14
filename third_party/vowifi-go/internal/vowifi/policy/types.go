@@ -129,6 +129,7 @@ type CarrierOverride struct {
 	OmitIKEFragmentNotifies       *bool                       `yaml:"omit_ike_fragment_notifies"`
 	CPRequestAttributes           []uint16                    `yaml:"cp_request_attributes"`
 	DeviceIdentityIMEI            string                      `yaml:"device_identity_imei"`
+	WithholdDeviceIdentity        *bool                       `yaml:"withhold_device_identity"`
 	NATKeepaliveSeconds           *int                        `yaml:"nat_keepalive_seconds"`
 	DPDIntervalSeconds            *int                        `yaml:"dpd_interval_seconds"`
 	EnableLegacyCiphers           *bool                       `yaml:"enable_legacy_ciphers"`
@@ -148,6 +149,7 @@ type CarrierOverride struct {
 	DPDKeepaliveIntervalSeconds   int                         `yaml:"dpd_keepalive_interval_seconds"`
 	ReauthIntervalSeconds         int                         `yaml:"reauth_interval_seconds"`
 	IKERekeyIntervalSeconds       int                         `yaml:"ike_rekey_interval_seconds"`
+	KeepChildSAOnRekeyDecline     *bool                       `yaml:"keep_child_sa_on_rekey_decline"`
 	IMSRegisterTemplate           IMSRegisterTemplateOverride `yaml:"ims_register_template"`
 	SMSRoutingMethod              string                      `yaml:"sms_routing_method"`
 	SMSRoutingGW                  string                      `yaml:"sms_routing_gw"`
@@ -177,6 +179,7 @@ type CarrierPreset struct {
 	IKEAuthMinimal                   *bool
 	OmitIKEFragmentNotifies          *bool
 	CPRequestAttributes              []uint16
+	WithholdDeviceIdentity           bool
 	NATKeepaliveSeconds              *int
 	DPDIntervalSeconds               *int
 	EnableLegacyCiphers              *bool
@@ -192,6 +195,7 @@ type CarrierPreset struct {
 	DPDKeepaliveIntervalSeconds      int
 	ReauthIntervalSeconds            int
 	IKERekeyIntervalSeconds          int
+	KeepChildSAOnRekeyDecline        bool
 	IMSRegisterTemplate              IMSRegisterTemplate
 	IPStackType                      string `json:"ip_stack,omitempty" yaml:"ip_stack,omitempty"`
 	SMSRoutingMethod, SMSRoutingGW   string
@@ -217,6 +221,7 @@ type EffectiveCarrierConfig struct {
 	AllowedLegacyCiphers                               []string
 	AlgorithmPolicy, DeviceIdentityIMEI                string
 	DeviceIdentityEnabled                              bool
+	WithholdDeviceIdentity                             bool
 	DeviceModel, IMSDomain, IMSRealm                   string
 	IMSRegistrar, IMSPCSCF, IMSUserAgent               string
 	IMSTransport, IMSIdentitySource                    string
@@ -224,6 +229,7 @@ type EffectiveCarrierConfig struct {
 	IMSOptionsPingIntervalSeconds                      int
 	DPDKeepaliveIntervalSeconds, ReauthIntervalSeconds int
 	IKERekeyIntervalSeconds                            int
+	KeepChildSAOnRekeyDecline                          bool
 	IMSRegisterTemplate                                IMSRegisterTemplate
 	IMSRegisterPolicySource                            string
 	SMSRoutingMethod, SMSRoutingGW                     string
@@ -271,6 +277,7 @@ type IKEPlan struct {
 	AlgorithmPolicy                                    string
 	DPDKeepaliveIntervalSeconds, ReauthIntervalSeconds int
 	IKERekeyIntervalSeconds                            int
+	KeepChildSAOnRekeyDecline                          bool
 	AKAPrimePreferred                                  bool
 	IKEAuthMinimal                                     bool
 	OmitIKEFragmentNotifies                            bool
@@ -289,6 +296,7 @@ type SMSPlan struct {
 type DeviceIdentityPlan struct {
 	IdentityIMEI    string
 	IdentityEnabled bool
+	Withhold        bool
 	Model           string
 }
 type CarrierPlan struct {

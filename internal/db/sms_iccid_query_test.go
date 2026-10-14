@@ -208,7 +208,10 @@ func TestCreateSMSDeliveryPopulatesICCID(t *testing.T) {
 	if err := DB.Create(&SIMCard{ICCID: "ICC_DLV", IMSI: "IMSI_DLV"}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := CreateSMSDelivery("msg-1", "IMSI_DLV", "wwan0", "+10086", "hi", 1, time.Now()); err != nil {
+	if err := CreateSMSDelivery(SMSDeliveryCreate{
+		MessageID: "msg-1", IMSI: "IMSI_DLV", DeviceID: "wwan0",
+		Peer: "+10086", Content: "hi", PartsTotal: 1, At: time.Now(),
+	}); err != nil {
 		t.Fatalf("CreateSMSDelivery error=%v", err)
 	}
 	st, err := GetSMSDeliveryStatus("msg-1")
@@ -217,6 +220,61 @@ func TestCreateSMSDeliveryPopulatesICCID(t *testing.T) {
 	}
 	if st.ICCID != "ICC_DLV" {
 		t.Fatalf("投递记录 iccid 未回填: %+v", st)
+	}
+}
+
+func TestCreateSMSDeliveryUsesCurrentDeviceBindingForReusedIMSI(t *testing.T) {
+	openTestDB(t)
+	const imsi = "234150000000099"
+	for _, iccid := range []string{"8944100000000000098", "8944100000000000099"} {
+		if err := DB.Create(&SIMCard{ICCID: iccid, IMSI: imsi}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	current := "8944100000000000099"
+	if err := DB.Create(&Device{IMEI: "860000000000099", Alias: "wwan9", CurrentICCID: &current}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateSMSDelivery(SMSDeliveryCreate{
+		MessageID: "msg-reused", IMSI: imsi, DeviceID: "wwan9",
+		Peer: "+10086", Content: "hi", PartsTotal: 1, At: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	status, err := GetSMSDeliveryStatus("msg-reused")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.ICCID != current {
+		t.Fatalf("delivery ICCID=%q want current device ICCID %q", status.ICCID, current)
+	}
+}
+
+func TestCreateSMSDeliveryKeepsCapturedIdentityAfterDeviceSIMChange(t *testing.T) {
+	openTestDB(t)
+	const imsi = "234150000000077"
+	oldICCID := "8944100000000000077"
+	newICCID := "8944100000000000078"
+	for _, iccid := range []string{oldICCID, newICCID} {
+		if err := DB.Create(&SIMCard{ICCID: iccid, IMSI: imsi}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := DB.Create(&Device{IMEI: "860000000000077", Alias: "wwan7", CurrentICCID: &newICCID}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateSMSDelivery(SMSDeliveryCreate{
+		MessageID: "msg-captured", ICCID: oldICCID, IMSI: imsi, DeviceID: "wwan7",
+		Peer: "+10086", Content: "hi", PartsTotal: 1, At: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	status, err := GetSMSDeliveryStatus("msg-captured")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.ICCID != oldICCID {
+		t.Fatalf("delivery ICCID=%q want captured ICCID %q", status.ICCID, oldICCID)
 	}
 }
 

@@ -13,19 +13,9 @@ import (
 const smsNotificationCursorBits = 53
 
 func (s *Server) handleSMSNotifications(c *gin.Context) {
-	var afterID *uint
-	if values, present := c.Request.URL.Query()["after_id"]; present {
-		if len(values) != 1 {
-			c.JSON(http.StatusBadRequest, gin.H{"message": "after_id 只能提供一次"})
-			return
-		}
-		parsed, err := strconv.ParseUint(values[0], 10, smsNotificationCursorBits)
-		if err != nil || uint64(uint(parsed)) != parsed {
-			c.JSON(http.StatusBadRequest, gin.H{"message": "after_id 必须是有效的非负短信 ID"})
-			return
-		}
-		value := uint(parsed)
-		afterID = &value
+	afterID, ok := parseSMSQueryAfterID(c)
+	if !ok {
+		return
 	}
 	result, err := db.GetSMSNotifications(c.Request.Context(), afterID)
 	if err != nil {
@@ -35,4 +25,26 @@ func (s *Server) handleSMSNotifications(c *gin.Context) {
 	}
 	c.Header("Cache-Control", "no-store")
 	c.JSON(http.StatusOK, result)
+}
+
+func parseSMSQueryAfterID(c *gin.Context) (*uint, bool) {
+	values, present := c.Request.URL.Query()["after_id"]
+	if !present {
+		return nil, true
+	}
+	if len(values) != 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "after_id 只能提供一次"})
+		return nil, false
+	}
+	return parseSMSCursorValue(c, values[0])
+}
+
+func parseSMSCursorValue(c *gin.Context, value string) (*uint, bool) {
+	parsed, err := strconv.ParseUint(value, 10, smsNotificationCursorBits)
+	if err != nil || uint64(uint(parsed)) != parsed {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "短信游标必须是有效的非负短信 ID"})
+		return nil, false
+	}
+	id := uint(parsed)
+	return &id, true
 }

@@ -30,7 +30,7 @@ func normalizeUpstreamProxyPayload(existing *db.UpstreamProxy, req db.UpstreamPr
 }
 
 func probeUpstreamProxyConfig(c *gin.Context, proxy db.UpstreamProxy) (upstreamproxy.ProbeResult, error) {
-	return upstreamproxy.ProbeSOCKS5(c.Request.Context(), upstreamproxy.ProbeConfig{
+	return upstreamproxy.ProbeDiagnostics(c.Request.Context(), upstreamproxy.ProbeConfig{
 		ProxyAddr: proxy.Addr,
 		Username:  proxy.Username,
 		Password:  proxy.Password,
@@ -44,6 +44,9 @@ func upstreamProxySaveResult(
 	probeErr error,
 ) (string, string) {
 	if probeErr == nil {
+		if result.Egress != nil && result.Egress.Error != "" {
+			return "warning", successMessage + "，但出口国家检测未完成: " + result.Egress.Error
+		}
 		return "ok", successMessage
 	}
 	message := successMessage + "，但公共 DNS UDP 往返探测失败；实际 VoWiFi 将由 ePDG/IKE 建链验证"
@@ -159,7 +162,7 @@ func (s *Server) handleDeleteUpstreamProxy(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "message": "前置代理已删除"})
 }
 
-// handleProbeUpstreamProxy 探测前置代理的 SOCKS5 协商及公共 DNS UDP 往返能力。
+// handleProbeUpstreamProxy 分别探测 SOCKS5/DNS UDP 和经代理访问的 HTTPS 出口。
 func (s *Server) handleProbeUpstreamProxy(c *gin.Context) {
 	id := upstreamProxyIDParam(c)
 	proxy, err := db.GetUpstreamProxyByID(id)
@@ -172,12 +175,7 @@ func (s *Server) handleProbeUpstreamProxy(c *gin.Context) {
 		return
 	}
 
-	result, probeErr := upstreamproxy.ProbeSOCKS5(c.Request.Context(), upstreamproxy.ProbeConfig{
-		ProxyAddr: proxy.Addr,
-		Username:  proxy.Username,
-		Password:  proxy.Password,
-		Timeout:   5 * time.Second,
-	})
+	result, probeErr := probeUpstreamProxyConfig(c, *proxy)
 	if probeErr != nil {
 		c.JSON(http.StatusBadGateway, gin.H{
 			"status":  "error",
@@ -187,9 +185,10 @@ func (s *Server) handleProbeUpstreamProxy(c *gin.Context) {
 		return
 	}
 
+	status, message := upstreamProxySaveResult("前置代理探测成功", result, nil)
 	c.JSON(http.StatusOK, gin.H{
-		"status":  "ok",
-		"message": "前置代理探测成功",
+		"status":  status,
+		"message": message,
 		"result":  result,
 	})
 }

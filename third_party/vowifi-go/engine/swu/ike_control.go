@@ -2,11 +2,13 @@ package swu
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 	"github.com/iniwex5/vowifi-go/engine/ipsec"
+	"go.uber.org/zap"
 )
 
 const (
@@ -142,7 +144,6 @@ func (s *Session) runIKEDispatchLoop(
 				s.failEstablishedControl(errors.New("swu: IKE transport closed"))
 				return
 			}
-			s.markInboundActivity()
 			if err := s.dispatchIKEPacket(raw, taskManager, requests); err != nil {
 				s.failEstablishedControl(err)
 				return
@@ -157,18 +158,26 @@ func (s *Session) dispatchIKEPacket(
 	requests chan<- []byte,
 ) error {
 	header, err := ikev2.DecodeHeader(raw)
-	if err != nil {
-		return fmt.Errorf("swu: decode established IKE header: %w", err)
+	if err == nil {
+		err = s.validateEstablishedIKEEnvelope(header, raw)
 	}
-	if err := s.validateEstablishedIKEEnvelope(header, raw); err != nil {
-		return err
+	if err != nil {
+		s.dropInvalidIKE(raw, err)
+		return nil
 	}
 	if handled, err := s.resendRetiredIKEDelete(raw); handled || err != nil {
 		return err
 	}
 	normalized, complete, err := s.normalizeInboundIKE(raw)
 	if err != nil {
-		return fmt.Errorf("swu: process inbound IKE fragment: %w", err)
+		err = fmt.Errorf("swu: process inbound IKE fragment: %w", err)
+		var syntax *authenticatedSyntaxError
+		var local *localIKEError
+		if errors.As(err, &syntax) || errors.As(err, &local) {
+			return err
+		}
+		s.dropInvalidIKE(raw, err)
+		return nil
 	}
 	if !complete {
 		return nil
@@ -230,6 +239,13 @@ func (s *Session) dispatchIKEResponse(
 	raw []byte,
 	taskManager *TaskManager,
 ) error {
+	if err := s.authenticateIKEResponse(header, raw); err != nil {
+		if errors.Is(err, errUnauthenticatedIKE) {
+			s.dropInvalidIKE(raw, err)
+			return nil
+		}
+		return err
+	}
 	if taskManager.handleResponseForExchange(header.MessageID, header.ExchangeType, raw) {
 		return nil
 	}
@@ -261,6 +277,10 @@ func (s *Session) ikeRequestLoop(requests <-chan []byte) {
 				return
 			}
 			if err := s.handleIncomingIKE(raw); err != nil {
+				if errors.Is(err, errUnauthenticatedIKE) {
+					s.dropInvalidIKE(raw, err)
+					continue
+				}
 				s.failEstablishedControl(err)
 				return
 			}
@@ -271,7 +291,7 @@ func (s *Session) ikeRequestLoop(requests <-chan []byte) {
 func (s *Session) handleIncomingIKE(raw []byte) error {
 	header, err := ikev2.DecodeHeader(raw)
 	if err != nil {
-		return fmt.Errorf("swu: decode peer IKE header: %w", err)
+		return fmt.Errorf("%w: decode peer IKE header: %w", errUnauthenticatedIKE, err)
 	}
 	switch header.ExchangeType {
 	case ikev2.ExchangeInformational:
@@ -280,7 +300,7 @@ func (s *Session) handleIncomingIKE(raw []byte) error {
 		s.dispatchCreateChildSA(raw)
 		return nil
 	default:
-		return fmt.Errorf("swu: unsupported established IKE exchange %d", header.ExchangeType)
+		return fmt.Errorf("%w: unsupported established IKE exchange %d", errUnauthenticatedIKE, header.ExchangeType)
 	}
 }
 
@@ -288,7 +308,7 @@ func (s *Session) handleIncomingIKE(raw []byte) error {
 func (s *Session) handleIncomingInformational(raw []byte) error {
 	packet, err := ikev2.DecodePacket(raw)
 	if err != nil {
-		return fmt.Errorf("swu: decode peer INFORMATIONAL: %w", err)
+		return fmt.Errorf("%w: decode peer INFORMATIONAL: %w", errUnauthenticatedIKE, err)
 	}
 	return s.handleIncomingInformationalPacket(packet)
 }
@@ -299,9 +319,24 @@ func (s *Session) dispatchCreateChildSA(raw []byte) {
 	if err == nil {
 		err = s.handleIncomingCreateChildSAPacket(packet)
 	}
+	if errors.Is(err, errUnauthenticatedIKE) || err != nil && packet == nil {
+		s.dropInvalidIKE(raw, err)
+		return
+	}
 	if err != nil {
 		s.failEstablishedControl(fmt.Errorf("swu: handle peer CREATE_CHILD_SA: %w", err))
 	}
+}
+
+// dropInvalidIKE discards an inbound IKE message that is malformed or not
+// authenticated. RFC 7296 2.21 and 2.21.4: such messages are audited, never
+// acted on, so they cannot take the established SA down.
+func (s *Session) dropInvalidIKE(raw []byte, err error) {
+	if s.Logger == nil {
+		return
+	}
+	s.Logger.Warn("dropped invalid IKE packet", zap.Int("bytes", len(raw)),
+		zap.String("head", hex.EncodeToString(raw[:min(len(raw), 32)])), zap.Error(err))
 }
 
 func (s *Session) failEstablishedControl(err error) {

@@ -1,0 +1,83 @@
+name: Build OpenWrt packages
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.targets.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: targets
+        run: echo "matrix=$(jq -c . packaging/openwrt/sdk-matrix.json)" >> "$GITHUB_OUTPUT"
+
+  packages:
+    needs: matrix
+    runs-on: ubuntu-latest
+    # Download (60m), SDK image (15m), package compilation (60m) and uploads.
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.matrix.outputs.targets) }}
+    env:
+      HIDECK_VERSION: ${{ inputs.version }}
+      TARGET_ID: ${{ matrix.id }}
+      BINARY_ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate release identifier
+        run: '[[ "$HIDECK_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]'
+      - uses: actions/download-artifact@v4
+        with:
+          name: binaries-openwrt-${{ matrix.arch }}
+          path: input
+      - name: Verify release input
+        run: |
+          cd input
+          asset="hideck_${HIDECK_VERSION}_openwrt_${BINARY_ARCH}"
+          digest=$(awk -v name="$asset" '$2 == name || $2 == "*" name { print $1 }' "$asset.sha256")
+          [[ "$digest" =~ ^[a-f0-9]{64}$ ]]
+          printf '%s  %s\n' "$digest" "$asset" | sha256sum -c -
+      - name: Download verified OpenWrt SDK
+        id: sdk
+        uses: ./.github/actions/download-openwrt-sdk
+        with:
+          sdk-id: ${{ matrix.id }}
+      - name: Build pinned SDK image
+        env:
+          SDK_URL: ${{ steps.sdk.outputs.url }}
+          SDK_SHA256: ${{ steps.sdk.outputs.sha256 }}
+          SDK_CACHE_DIR: ${{ steps.sdk.outputs.cache-dir }}
+        run: |
+          timeout 900 docker build -f packaging/openwrt/Dockerfile.sdk \
+            --build-context "sdk-cache=$SDK_CACHE_DIR" \
+            --build-arg SDK_URL --build-arg SDK_SHA256 -t hideck-sdk:ci .
+      - name: Build packages
+        run: |
+          mkdir -p output
+          timeout 3600 docker run --rm \
+            --mount "type=bind,source=$GITHUB_WORKSPACE,target=/src,readonly" \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/output,target=/out" \
+            -e SDK_DIR=/sdk -e HIDECK_VERSION -e OUTPUT_DIR=/out -e JOBS=2 \
+            -e "HIDECK_BINARY=/src/input/hideck_${HIDECK_VERSION}_openwrt_${BINARY_ARCH}" \
+            hideck-sdk:ci timeout 3500 sh /src/packaging/openwrt/build-packages.sh
+      - name: Archive target-specific packages
+        run: |
+          printf 'OpenWrt SDK: %s\nHiDeck: %s\nSource: %s\n' \
+            "$TARGET_ID" "$HIDECK_VERSION" "$GITHUB_SHA" > output/BUILDINFO
+          mkdir -p artifacts
+          tar -czf "artifacts/hideck_${HIDECK_VERSION}_openwrt-packages_${TARGET_ID}.tar.gz" -C output .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries-openwrt-packages-${{ matrix.id }}
+          path: artifacts/*
+          if-no-files-found: error

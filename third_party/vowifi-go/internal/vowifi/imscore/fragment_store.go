@@ -34,6 +34,7 @@ func (s *Service) inboundFragmentOwner() smsInboundFragmentOwner {
 	owner := smsInboundFragmentOwner{}
 	if s != nil && s.cfg != nil {
 		owner.DeviceID = strings.TrimSpace(s.cfg.DeviceID)
+		owner.ICCID = strings.TrimSpace(s.cfg.ICCID)
 		owner.IMSI = strings.TrimSpace(s.cfg.IMSI)
 	}
 	return owner

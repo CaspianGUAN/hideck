@@ -251,6 +251,7 @@ func (s *Session) handleRFCChallenge(packet eapaka.Packet) ([]ikev2.Payload, err
 	_, s.eapResultIndicated = eapaka.FindAttribute(response.Attributes, eapaka.AttributeResultInd)
 	s.eapResultConfirmed = false
 	s.eapKeys = keys
+	s.deviceIdentityEAPVerified = !s.cfg.DisableEAPMACValidation
 	if err := s.captureFastReauthentication(packet, keys); err != nil {
 		return nil, err
 	}

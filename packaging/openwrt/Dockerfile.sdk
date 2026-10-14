@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1
+# CI overrides this empty stage with a verified archive via --build-context.
+FROM scratch AS sdk-cache
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential ca-certificates clang cmake curl file gawk gettext git \
+      libncurses-dev libssl-dev ninja-build patch pkg-config python3 python3-setuptools \
+      rsync time unzip wget xsltproc xz-utils zstd \
+    && rm -rf /var/lib/apt/lists/*
+
+# The caller supplies a pinned official SDK URL and its SHA-256, not "latest".
+ARG SDK_URL
+ARG SDK_SHA256
+COPY packaging/openwrt/download_sdk.py /usr/local/lib/hideck/download_sdk.py
+RUN --mount=type=bind,from=sdk-cache,target=/sdk-seed \
+    --mount=type=cache,target=/var/cache/hideck-sdk,sharing=locked \
+    archive=$(python3 /usr/local/lib/hideck/download_sdk.py \
+      --url "$SDK_URL" --sha256 "$SDK_SHA256" \
+      --cache-dir /var/cache/hideck-sdk --seed-dir /sdk-seed) \
+    && mkdir /sdk && tar --zstd -xf "$archive" -C /sdk --strip-components=1
+
+WORKDIR /sdk
+ENV FORCE_UNSAFE_CONFIGURE=1

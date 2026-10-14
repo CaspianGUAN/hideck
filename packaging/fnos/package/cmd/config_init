@@ -1,0 +1,3 @@
+#!/bin/sh
+set -eu
+exec "${TRIM_APPDEST:?fnOS application directory is required}/bin/configure-entry" validate

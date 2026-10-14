@@ -40,6 +40,7 @@ type IMSConfig struct {
 	ForceSMSCAuth              bool                       `mapstructure:"-"`
 
 	IMEI                       string
+	ICCID                      string
 	IMSI                       string
 	IMPUs                      []string
 	SMSC                       string

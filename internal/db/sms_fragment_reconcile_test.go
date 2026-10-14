@@ -1,6 +1,7 @@
 package db
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -80,5 +81,51 @@ func TestSaveReceivedMultipartSMSKeepsOtherSessionsIndependent(t *testing.T) {
 	}
 	if count != 2 {
 		t.Fatalf("independent session rows=%d want 2", count)
+	}
+}
+
+func TestSaveReceivedMultipartSMSSeparatesProfilesSharingIMSI(t *testing.T) {
+	openTestDB(t)
+	base := ReceivedMultipartSMS{
+		IMSI: "IMSI-SHARED", Sender: "service", Recipient: "+447840844894",
+		Content: "message", FragmentSessionKey: "ref=7", Timestamp: time.Now(),
+	}
+	for _, iccid := range []string{"8944100000000000001", "8944100000000000002"} {
+		base.ICCID = iccid
+		if _, err := SaveReceivedMultipartSMS(base); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var count int64
+	if err := DB.Model(&SMS{}).Where("imsi = ?", base.IMSI).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("profile-specific session rows=%d want 2", count)
+	}
+}
+
+func TestEnsureSMSFragmentSessionIndexMigratesLegacyDefinition(t *testing.T) {
+	openTestDB(t)
+	if err := DB.Exec("DROP INDEX " + smsFragmentSessionIndexName).Error; err != nil {
+		t.Fatal(err)
+	}
+	legacy := "CREATE UNIQUE INDEX " + smsFragmentSessionIndexName +
+		" ON sms(imsi, fragment_session_key) WHERE fragment_session_key <> ''"
+	if err := DB.Exec(legacy).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureSMSFragmentSessionUniqueIndex(DB); err != nil {
+		t.Fatal(err)
+	}
+	var definition string
+	if err := DB.Raw(
+		"SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", smsFragmentSessionIndexName,
+	).Scan(&definition).Error; err != nil {
+		t.Fatal(err)
+	}
+	compact := compactSQLiteDefinition(definition)
+	if !strings.Contains(compact, "onsms(iccid,fragment_session_key)") {
+		t.Fatalf("index definition=%q", definition)
 	}
 }

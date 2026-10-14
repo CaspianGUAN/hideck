@@ -27,19 +27,21 @@ type ProbeConfig struct {
 }
 
 type ProbeResult struct {
-	ProxyAddr      string `json:"proxy_addr"`
-	Stage          string `json:"stage"`
-	Reachable      bool   `json:"reachable"`
-	HandshakeOK    bool   `json:"handshake_ok"`
-	UDPAssociateOK bool   `json:"udp_associate_ok"`
-	UDPRelayOK     bool   `json:"udp_relay_ok"`
-	UDPProbeTarget string `json:"udp_probe_target,omitempty"`
-	AuthMethod     string `json:"auth_method,omitempty"`
-	RelayAddr      string `json:"relay_addr,omitempty"`
-	DurationMS     int64  `json:"duration_ms"`
-	Diagnosis      string `json:"diagnosis,omitempty"`
-	Hint           string `json:"hint,omitempty"`
-	Error          string `json:"error,omitempty"`
+	CheckedAt      time.Time    `json:"checked_at"`
+	Egress         *EgressProbe `json:"egress,omitempty"`
+	ProxyAddr      string       `json:"proxy_addr"`
+	Stage          string       `json:"stage"`
+	Reachable      bool         `json:"reachable"`
+	HandshakeOK    bool         `json:"handshake_ok"`
+	UDPAssociateOK bool         `json:"udp_associate_ok"`
+	UDPRelayOK     bool         `json:"udp_relay_ok"`
+	UDPProbeTarget string       `json:"udp_probe_target,omitempty"`
+	AuthMethod     string       `json:"auth_method,omitempty"`
+	RelayAddr      string       `json:"relay_addr,omitempty"`
+	DurationMS     int64        `json:"duration_ms"`
+	Diagnosis      string       `json:"diagnosis,omitempty"`
+	Hint           string       `json:"hint,omitempty"`
+	Error          string       `json:"error,omitempty"`
 }
 
 func (r ProbeResult) OK() bool {
@@ -140,6 +142,7 @@ func ProbeSOCKS5(ctx context.Context, cfg ProbeConfig) (ProbeResult, error) {
 }
 
 func finalizeProbeResult(result ProbeResult, startedAt time.Time) ProbeResult {
+	result.CheckedAt = time.Now()
 	result.DurationMS = time.Since(startedAt).Milliseconds()
 	annotateProbeResult(&result)
 	return result

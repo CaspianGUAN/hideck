@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/yibaiba/hideck/pkg/logger"
 	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
+	"github.com/yibaiba/hideck/pkg/logger"
 )
 
 const voWiFiCallSetupGrace = 45 * time.Second
@@ -45,6 +45,9 @@ func (s *Server) handleDeviceVoWiFiCall(c *gin.Context) {
 		OnConnected: func() { logger.Info("VoWiFi 外呼已接通并启动 RTP", "device", deviceID, "trace_id", traceID) },
 	})
 	if err != nil {
+		if respondOutboundLimit(c, err) {
+			return
+		}
 		logger.Error("VoWiFi 外呼失败", "device", deviceID, "err", err, "trace_id", traceID)
 		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "code": "vowifi_call_failed", "message": err.Error(), "trace_id": traceID})
 		return

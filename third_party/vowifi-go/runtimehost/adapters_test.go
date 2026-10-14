@@ -81,7 +81,8 @@ func startTestRegistrar(t *testing.T) *net.UDPConn {
 			body := ""
 			extraHeaders := ""
 			if strings.HasPrefix(request, "REGISTER ") {
-				extraHeaders = "P-Associated-URI: <sip:+15551234567@ims.example.com>\r\n"
+				extraHeaders = "P-Associated-URI: <sip:+15551234567@ims.example.com>\r\n" +
+					"Contact: " + testSIPHeader(request, "Contact") + "\r\n"
 			}
 			if strings.HasPrefix(request, "INVITE ") {
 				body = `<?xml version="1.0"?><ussd-data><language>en</language><ussd-string>Balance: 10</ussd-string><UnstructuredSS-Notify/></ussd-data>`
@@ -446,7 +447,8 @@ func startVoiceAdapterRegistrar(
 			}
 			body, extra := "", ""
 			if strings.HasPrefix(request, "REGISTER ") {
-				extra = "P-Associated-URI: <sip:+15551234567@ims.example.com>\r\n"
+				extra = "P-Associated-URI: <sip:+15551234567@ims.example.com>\r\n" +
+					"Contact: " + testSIPHeader(request, "Contact") + "\r\n"
 			}
 			if strings.HasPrefix(request, "INVITE ") {
 				body = fmt.Sprintf("v=0\r\no=- 2 2 IN IP4 127.0.0.1\r\ns=ims\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio %d RTP/AVP 0 101\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-16\r\n", mediaPort)
@@ -583,8 +585,23 @@ func (store fragmentOnlyDeliveryStore) MarkInboundFragmentAcked(
 	return store.fragments.MarkInboundFragmentAcked(scope, sequence, at)
 }
 
-func (m *memDeliveryStore) CreateSMSDelivery(messageID, imsi, deviceID, peer, content string, partsTotal int, at time.Time) error {
-	m.status = &messaging.DeliveryStatus{MessageID: messageID, IMSI: imsi, DeviceID: deviceID, Peer: peer, Content: content, PartsTotal: partsTotal, State: "accepted"}
+func (m *memDeliveryStore) CreateSMSDelivery(
+	messageID, imsi, deviceID, peer, content string,
+	partsTotal int,
+	_ time.Time,
+) error {
+	return m.CreateSMSDeliveryForIdentity(messaging.DeliveryRecord{
+		MessageID: messageID, IMSI: imsi, DeviceID: deviceID,
+		Peer: peer, Content: content, PartsTotal: partsTotal,
+	})
+}
+
+func (m *memDeliveryStore) CreateSMSDeliveryForIdentity(record messaging.DeliveryRecord) error {
+	m.status = &messaging.DeliveryStatus{
+		MessageID: record.MessageID, ICCID: record.ICCID, IMSI: record.IMSI,
+		DeviceID: record.DeviceID, Peer: record.Peer, Content: record.Content,
+		PartsTotal: record.PartsTotal, State: "accepted",
+	}
 	return nil
 }
 func (m *memDeliveryStore) UpsertSMSDeliveryPart(messageID string, partNo int, callID string, rpMR int, state string, sentAt time.Time) error {
@@ -636,7 +653,14 @@ func (m *memDeliveryStore) MarkInboundFragmentsDegraded(
 func TestDeliveryStoreAdapter(t *testing.T) {
 	store := &memDeliveryStore{}
 	adapter := newDeliveryStoreAdapter(store)
-	if err := adapter.CreateSMSDelivery("msg-1", "310260123456789", "dev-1", "+8613800000000", "hi", 1, time.Now()); err != nil {
+	identityAdapter, ok := adapter.(imscore.SMSDeliveryIdentityStore)
+	if !ok {
+		t.Fatal("adapter did not preserve delivery identity capability")
+	}
+	if err := identityAdapter.CreateSMSDeliveryForIdentity(messaging.DeliveryRecord{
+		MessageID: "msg-1", ICCID: "8901000000000000001", IMSI: "310260123456789",
+		DeviceID: "dev-1", Peer: "+8613800000000", Content: "hi", PartsTotal: 1, At: time.Now(),
+	}); err != nil {
 		t.Fatalf("CreateSMSDelivery: %v", err)
 	}
 	st, err := adapter.GetSMSDeliveryStatus("msg-1")

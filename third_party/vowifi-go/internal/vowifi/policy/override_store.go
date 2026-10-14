@@ -88,6 +88,8 @@ func cloneCarrierOverridePointers(value *CarrierOverride) {
 	value.DeviceIdentityEnabled = cloneBoolPointer(value.DeviceIdentityEnabled)
 	value.IKEAuthMinimal = cloneBoolPointer(value.IKEAuthMinimal)
 	value.OmitIKEFragmentNotifies = cloneBoolPointer(value.OmitIKEFragmentNotifies)
+	value.WithholdDeviceIdentity = cloneBoolPointer(value.WithholdDeviceIdentity)
+	value.KeepChildSAOnRekeyDecline = cloneBoolPointer(value.KeepChildSAOnRekeyDecline)
 	value.NATKeepaliveSeconds = cloneIntPointer(value.NATKeepaliveSeconds)
 	value.DPDIntervalSeconds = cloneIntPointer(value.DPDIntervalSeconds)
 	value.EnableLegacyCiphers = cloneBoolPointer(value.EnableLegacyCiphers)

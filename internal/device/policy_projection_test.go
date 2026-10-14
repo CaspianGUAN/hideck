@@ -104,6 +104,7 @@ func TestResolveAndApplyPolicyKeepsLebaraUKRadioOff(t *testing.T) {
 	w.state.Identity.ICCID = "8944000000000000087"
 	w.state.Identity.IMSI = "234870000000001"
 
+	p.workers = map[string]*Worker{w.ID: w}
 	result := p.resolveAndApplyPolicy(w, "test")
 	if result.Err != nil {
 		t.Fatal(result.Err)
@@ -219,6 +220,7 @@ func TestDefaultAirplaneAndNonVoWiFiNeverOpenRadioOrIMS(t *testing.T) {
 			w.state.Identity.ICCID = tc.pol.ICCID
 			w.state.Identity.IMSI = "001010000000001"
 
+			p.workers = map[string]*Worker{w.ID: w}
 			res := p.resolveAndApplyPolicy(w, "startup_post_apply")
 			if !res.Applied {
 				t.Fatalf("应成功应用: %+v", res)
@@ -263,6 +265,7 @@ func TestSwitchAirplaneToVoWiFiKeepsRadioOff(t *testing.T) {
 	w.state.Identity.ICCID = "898600000000000010"
 	w.state.Identity.IMSI = "001010000000001"
 
+	p.workers = map[string]*Worker{w.ID: w}
 	res := p.resolveAndApplyPolicy(w, "api_enable_vowifi")
 	if !res.Applied {
 		t.Fatalf("应成功应用: %+v", res)
@@ -370,6 +373,7 @@ func TestIdentityReadyAfterConnectHoldRestoresCamp(t *testing.T) {
 	w.state.Identity.ICCID = "123"
 
 	p.holdRadioOffOnConnect(w, "connect_hold_rf")
+	p.workers = map[string]*Worker{w.ID: w}
 	res := p.resolveAndApplyPolicy(w, "identity_ready")
 	if !res.Applied {
 		t.Fatalf("identity_ready 应应用策略: %+v", res)
@@ -424,6 +428,7 @@ func TestIdentityReadyAfterConnectHoldKeepsAirplaneOrVoWiFiRFOff(t *testing.T) {
 			w.state.Identity.ICCID = "123"
 
 			p.holdRadioOffOnConnect(w, "connect_hold_rf")
+			p.workers = map[string]*Worker{w.ID: w}
 			res := p.resolveAndApplyPolicy(w, "identity_ready")
 			if !res.Applied {
 				t.Fatalf("identity_ready 应应用策略: %+v", res)
@@ -549,6 +554,7 @@ func TestResolveAndApplyPolicyNetworkOffKeepsCamped(t *testing.T) {
 	w := &Worker{ID: "wwan0", Backend: stub}
 	w.state.Identity.ICCID = "123"
 
+	p.workers = map[string]*Worker{w.ID: w}
 	res := p.resolveAndApplyPolicy(w, "vowifi_disabled")
 	if !res.Applied {
 		t.Fatalf("应成功应用: %+v", res)
@@ -572,6 +578,7 @@ func TestResolveAndApplyPolicy_ResolvesAndProjects(t *testing.T) {
 	w := &Worker{ID: "wwan0", Backend: stub}
 	w.state.Identity.ICCID = "123"
 
+	p.workers = map[string]*Worker{w.ID: w}
 	res := p.resolveAndApplyPolicy(w, "test")
 	if !res.Applied {
 		t.Fatalf("应成功应用: %+v", res)
@@ -599,6 +606,7 @@ func TestResolveAndApplyPolicyDoesNotRecoverVoWiFiWhenCardPolicyDisabled(t *test
 	w.state.Identity.ICCID = "123"
 	w.state.Identity.IMSI = "001010000000001"
 
+	p.workers = map[string]*Worker{w.ID: w}
 	res := p.resolveAndApplyPolicy(w, "test")
 	if !res.Applied {
 		t.Fatalf("应成功应用: %+v", res)
@@ -631,6 +639,7 @@ func TestResolveAndApplyPolicyDoesNotRecoverCellularOnDemand(t *testing.T) {
 	w.state.Identity.ICCID = "123"
 	w.state.Identity.IMSI = "001010000000001"
 
+	p.workers = map[string]*Worker{w.ID: w}
 	res := p.resolveAndApplyPolicy(w, "startup_post_apply")
 	if !res.Applied {
 		t.Fatalf("应成功应用: %+v", res)
@@ -671,6 +680,7 @@ func TestResolveAndApplyPolicyDoesNotRecoverCellularAirplane(t *testing.T) {
 	w.state.Identity.ICCID = "123"
 	w.state.Identity.IMSI = "001010000000001"
 
+	p.workers = map[string]*Worker{w.ID: w}
 	res := p.resolveAndApplyPolicy(w, "flight_mode_change")
 	if !res.Applied {
 		t.Fatalf("应成功应用: %+v", res)
@@ -729,6 +739,7 @@ func TestRefreshIdentityAndApplyCardPolicyReturnsResolverError(t *testing.T) {
 		},
 	}
 
+	p.workers = map[string]*Worker{w.ID: w}
 	_, err := p.refreshIdentityAndApplyCardPolicy(w, "startup_post_apply")
 	if !errors.Is(err, expected) {
 		t.Fatalf("refresh error = %v, want wrapped resolver error", err)

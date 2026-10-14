@@ -1,5 +1,16 @@
 import type { PhoneCall, PhoneRecord } from '../services/phone'
 
+const DIAL_NUMBER_PATTERN = /^\+?[0-9]{1,32}$/
+
+export function dialNumberError(number: string, region?: string): string {
+  if (!number) return ''
+  if (!DIAL_NUMBER_PATTERN.test(number)) return '号码只能包含可选的前导 + 和 1–32 位数字'
+  if (region === 'GB' && number.startsWith('+440')) {
+    return '英国国际号码需去掉本地号码开头的 0，例如 079… 应填写 +4479…'
+  }
+  return ''
+}
+
 export const phoneStatusLabels: Record<string, string> = {
   calling: '呼叫中',
   ringing: '响铃中',

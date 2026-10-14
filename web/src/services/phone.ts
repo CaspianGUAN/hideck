@@ -5,7 +5,7 @@ export type PhoneDevice = {
   id: string
   name: string
   iccid: string
-  voice: { ready?: boolean; registered?: boolean; active_call?: boolean }
+  voice: { ready?: boolean; registered?: boolean; active_call?: boolean; phase?: string; last_error?: string }
   phone_mode?: string      // "wifi" | "cellular" | "volte"
   native_volte?: {
     phase?: string
@@ -29,6 +29,7 @@ export type PhoneDevice = {
   vowifi_active?: boolean
   software_ims_blocked?: boolean
   phone_region?: string
+  phone_country_code?: number
   rf_lock?: string
   lebara_identity_status?: string
   lebara_identity_message?: string
@@ -80,13 +81,22 @@ function leaseHeaders(lease: string) {
   return lease ? { 'X-Phone-Lease': lease } : undefined
 }
 
+const MEDIA_RELEASE_TIMEOUT_MS = 5_000
+
 export const phoneService = {
-  async devices() {
-    return (await api.get<{ devices: PhoneDevice[] }>('/phone/devices')).data.devices
+  async devices(signal?: AbortSignal) {
+    return (await api.get<{ devices: PhoneDevice[] }>('/phone/devices', { signal })).data.devices
   },
 
   async createMedia(sdp: string) {
     return (await api.post<{ media_id: string; lease: string; sdp: string }>('/phone/media', { sdp })).data
+  },
+
+  async releaseMedia(mediaId: string, lease: string) {
+    await api.delete(`/phone/media/${encodeURIComponent(mediaId)}`, {
+      headers: leaseHeaders(lease),
+      timeout: MEDIA_RELEASE_TIMEOUT_MS
+    })
   },
 
   async active(lease: string) {

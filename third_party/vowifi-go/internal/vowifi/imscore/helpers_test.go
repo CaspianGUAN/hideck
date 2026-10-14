@@ -228,6 +228,15 @@ func registerResponseForRequest(request string, status int, headers map[string]s
 		responseHeaders[name] = value
 	}
 	responseHeaders["Via"] = sipHeaderValue(request, "Via")
+	if status >= 200 && status < 300 && sipRequestMethod(request) == "REGISTER" {
+		if _, explicit := responseHeaders["Contact"]; !explicit {
+			contact := sipHeaderValue(request, "Contact")
+			start, end := sipAddressSpan(contact)
+			if contact != "*" && end > start {
+				responseHeaders["Contact"] = "<" + contact[start:end] + ">"
+			}
+		}
+	}
 	return &sipResponse{
 		StatusCode: status,
 		CallID:     sipHeaderValue(request, "Call-ID"),

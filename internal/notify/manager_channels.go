@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"strings"
 	"sync"
 
 	"github.com/yibaiba/hideck/internal/config"
@@ -14,6 +15,7 @@ type channelActivity struct {
 type channelDelivery struct {
 	channel  Channel
 	activity *channelActivity
+	devices  map[string]bool // nil delivers every device
 }
 
 type channelCommandReceiver interface {
@@ -26,19 +28,35 @@ type channelFactory struct {
 	build   func() (Channel, error)
 }
 
+// channelNames lists every channel that can carry a device filter.
+var channelNames = []string{
+	"telegram", "feishu", "qq", "weixin", "wecom_bot", "webhook", "bark", "email", "pushplus", "wecom",
+}
+
+// IsChannelName reports whether name is a notification channel.
+func IsChannelName(name string) bool {
+	for _, known := range channelNames {
+		if name == known {
+			return true
+		}
+	}
+	return false
+}
+
 // initChannels builds a complete replacement before publishing it.
 func (m *Manager) initChannels(cfg *config.Config) error {
-	channels, err := m.buildChannels(cfg)
+	channels, filters, err := m.buildChannels(cfg)
 	if err != nil {
 		return err
 	}
 	m.registerCommands(channels)
-	m.installChannels(channels)
+	m.installChannels(channels, filters)
 	return nil
 }
 
-func (m *Manager) buildChannels(cfg *config.Config) ([]Channel, error) {
+func (m *Manager) buildChannels(cfg *config.Config) ([]Channel, map[Channel]map[string]bool, error) {
 	channels := make([]Channel, 0)
+	filters := make(map[Channel]map[string]bool)
 	for _, factory := range m.channelFactories(cfg) {
 		if !factory.enabled {
 			continue
@@ -47,13 +65,29 @@ func (m *Manager) buildChannels(cfg *config.Config) ([]Channel, error) {
 		if err != nil {
 			closeChannels(channels)
 			logger.Error("初始化通知渠道失败", "channel", factory.name, "err", err)
-			return nil, err
+			return nil, nil, err
 		}
 		if channel != nil {
 			channels = append(channels, channel)
+			if devices := deviceSet(cfg.NotificationDeviceFilters[factory.name]); devices != nil {
+				filters[channel] = devices
+			}
 		}
 	}
-	return channels, nil
+	return channels, filters, nil
+}
+
+func deviceSet(devices []string) map[string]bool {
+	var set map[string]bool
+	for _, device := range devices {
+		if device = strings.TrimSpace(device); device != "" {
+			if set == nil {
+				set = make(map[string]bool)
+			}
+			set[device] = true
+		}
+	}
+	return set
 }
 
 func (m *Manager) channelFactories(cfg *config.Config) []channelFactory {
@@ -70,7 +104,7 @@ func (m *Manager) channelFactories(cfg *config.Config) []channelFactory {
 		{name: "weixin", enabled: cfg.Weixin.Enabled, build: func() (Channel, error) {
 			return NewWeixinChannel(WeixinChannelOptions{Config: cfg.Weixin, StateStore: m.stateStore})
 		}},
-		{name: "wecom-bot", enabled: cfg.WeComBot.Enabled, build: func() (Channel, error) {
+		{name: "wecom_bot", enabled: cfg.WeComBot.Enabled, build: func() (Channel, error) {
 			return NewWeComBotChannel(WeComBotOptions{Config: cfg.WeComBot, StateStore: m.stateStore})
 		}},
 		{name: "webhook", enabled: cfg.Webhook.Enabled, build: func() (Channel, error) { return NewWebhookChannel(cfg.Webhook) }},
@@ -98,8 +132,8 @@ func (m *Manager) registerCommands(channels []Channel) {
 	}
 }
 
-func (m *Manager) installChannels(channels []Channel) {
-	oldChannels, oldActivity := m.swapChannels(channels)
+func (m *Manager) installChannels(channels []Channel, filters map[Channel]map[string]bool) {
+	oldChannels, oldActivity := m.swapChannels(channels, filters)
 	if m.commandReceiversStarted {
 		startChannels(channels)
 	}
@@ -124,10 +158,12 @@ func (m *Manager) StartCommandReceivers() {
 	startChannels(channels)
 }
 
-func (m *Manager) swapChannels(channels []Channel) ([]Channel, []*channelActivity) {
+// swapChannels publishes channels together with their device filters.
+func (m *Manager) swapChannels(channels []Channel, filters map[Channel]map[string]bool) ([]Channel, []*channelActivity) {
 	m.channelsMu.Lock()
 	oldChannels, oldActivity := m.channels, m.channelActivity
 	m.channels = append([]Channel(nil), channels...)
+	m.deviceFilters = filters
 	m.channelActivity = newChannelActivities(len(channels))
 	m.channelsMu.Unlock()
 	return oldChannels, oldActivity
@@ -140,7 +176,7 @@ func (m *Manager) beginChannelSends() []channelDelivery {
 	for index, channel := range m.channels {
 		activity := m.channelActivity[index]
 		activity.sends.Add(1)
-		deliveries[index] = channelDelivery{channel: channel, activity: activity}
+		deliveries[index] = channelDelivery{channel: channel, activity: activity, devices: m.deviceFilters[channel]}
 	}
 	m.channelsMu.Unlock()
 	return deliveries
@@ -196,7 +232,7 @@ func (m *Manager) Close() {
 	m.updateMu.Lock()
 	defer m.updateMu.Unlock()
 	m.commandReceiversStarted = false
-	channels, activity := m.swapChannels(nil)
+	channels, activity := m.swapChannels(nil, nil)
 	retireChannels(channels, activity)
 }
 
@@ -222,6 +258,7 @@ func (m *Manager) RevokeChannel(name string) bool {
 	revokedActivity := make([]*channelActivity, 0, 1)
 	for index, channel := range m.channels {
 		if channel.Name() == name {
+			delete(m.deviceFilters, channel)
 			revoked = append(revoked, channel)
 			revokedActivity = append(revokedActivity, m.channelActivity[index])
 			continue
@@ -258,4 +295,17 @@ func (m *Manager) GetChannelNames() []string {
 		names = append(names, channel.Name())
 	}
 	return names
+}
+
+// accepts applies the channel's device filter to SMS and call notifications.
+// Other events, such as IP changes, go to every channel.
+func (d channelDelivery) accepts(ctx NotificationContext) bool {
+	if d.devices == nil || !deviceScopedEvent(ctx.Event) {
+		return true
+	}
+	return d.devices[strings.TrimSpace(ctx.DeviceID)]
+}
+
+func deviceScopedEvent(event string) bool {
+	return event == "sms_received" || event == "incoming_call" || strings.HasPrefix(event, "call_")
 }

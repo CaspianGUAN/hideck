@@ -24,6 +24,55 @@ func TestNormalizeAKAChallengeModeMatchesLegacyAliases(t *testing.T) {
 	}
 }
 
+func TestMinimalAKAChallengePreservesEmptyCheckcode(t *testing.T) {
+	session := NewSession(&Config{AKAChallengeMode: "minimal"})
+	request := eapaka.Packet{
+		Type:       eapaka.TypeAKA,
+		Attributes: []eapaka.Attribute{eapaka.CheckcodeAttribute(nil)},
+	}
+
+	attrs := session.appendAKAChallengeMetaAttrs(nil, request)
+	checkcode, ok := eapaka.FindAttribute(attrs, eapaka.AttributeCheckcode)
+	if !ok {
+		t.Fatal("empty AT_CHECKCODE was omitted")
+	}
+	value, err := checkcode.CheckcodeValue()
+	if err != nil {
+		t.Fatalf("parse AT_CHECKCODE: %v", err)
+	}
+	if len(value) != 0 {
+		t.Fatalf("AT_CHECKCODE = %x, want empty value", value)
+	}
+}
+
+func TestCheckcodeModePreservesCompleteServerValue(t *testing.T) {
+	want := bytes.Repeat([]byte{0x5a}, 20)
+	session := NewSession(&Config{AKAChallengeMode: "checkcode"})
+	request := eapaka.Packet{
+		Type: eapaka.TypeAKA,
+		Attributes: []eapaka.Attribute{
+			eapaka.CheckcodeAttribute(want),
+			eapaka.ResultIndAttribute(),
+		},
+	}
+
+	attrs := session.appendAKAChallengeMetaAttrs(nil, request)
+	checkcode, ok := eapaka.FindAttribute(attrs, eapaka.AttributeCheckcode)
+	if !ok {
+		t.Fatal("AT_CHECKCODE was omitted")
+	}
+	value, err := checkcode.CheckcodeValue()
+	if err != nil {
+		t.Fatalf("parse AT_CHECKCODE: %v", err)
+	}
+	if !bytes.Equal(value, want) {
+		t.Fatalf("AT_CHECKCODE = %x, want %x", value, want)
+	}
+	if _, ok := eapaka.FindAttribute(attrs, eapaka.AttributeResultInd); !ok {
+		t.Fatal("AT_RESULT_IND was omitted in checkcode mode")
+	}
+}
+
 func TestLegacyIdentitySelectionAndKeyDerivationFallback(t *testing.T) {
 	session := NewSession(&Config{IMSI: "234102356143376", FastReauthID: "fast@example"})
 	if got := session.currentIKEIdentity(); got != "fast@example" {
@@ -123,6 +172,23 @@ func TestInitialIKEAuthRestoresNotifyOrderAndDeviceIdentity(t *testing.T) {
 	want := []byte{0x00, 0x09, 0x01, 0x53, 0x98, 0x38, 0x63, 0x41, 0x33, 0x67, 0xf1}
 	if !bytes.Equal(notifications[4].NotifyData, want) || !bytes.Equal(notifications[5].NotifyData, want) {
 		t.Fatalf("device identity notify data = %x / %x, want %x", notifications[4].NotifyData, notifications[5].NotifyData, want)
+	}
+}
+
+func TestWithheldDeviceIdentityLeavesInitialIKEAuth(t *testing.T) {
+	session := NewSession(&Config{
+		IMSI: "234102356143376", APN: "ims", DeviceIdentityIMEI: "358983361433761",
+		EnableDeviceIdentitySpoof: true, WithholdDeviceIdentity: true,
+	})
+	payloads, err := session.buildIKEAuthInitPayloads()
+	if err != nil {
+		t.Fatalf("buildIKEAuthInitPayloads: %v", err)
+	}
+	for _, payload := range payloads {
+		if notify, ok := payload.(*ikev2.EncryptedPayloadNotify); ok &&
+			(notify.NotifyType == ikev2.DEVICE_IDENTITY_3GPP || notify.NotifyType == ikev2.DEVICE_IDENTITY) {
+			t.Fatalf("withheld IKE_AUTH carried DEVICE_IDENTITY %d", notify.NotifyType)
+		}
 	}
 }
 
@@ -291,28 +357,6 @@ func TestMinimalIKEAuthSendsOnlyEAPOnly(t *testing.T) {
 	}
 	if got := notifyTypes(payloads); len(got) != 1 || got[0] != ikev2.EAP_ONLY_AUTHENTICATION {
 		t.Fatalf("minimal IKE_AUTH notifies = %v, want only EAP_ONLY_AUTHENTICATION", got)
-	}
-}
-
-func TestMinimalIKEAuthAnswersRequestedDeviceIdentity(t *testing.T) {
-	session := NewSession(&Config{
-		IMSI: "520030393351967", APN: "ims", DeviceIdentityIMEI: "358983361433761", IKEAuthMinimal: true,
-	})
-	request := []ikev2.Payload{&ikev2.EncryptedPayloadNotify{NotifyType: ikev2.DEVICE_IDENTITY_3GPP, NotifyData: []byte{0, 1, 1}}}
-	if !ikeAuthRequestsDeviceIdentity(request) {
-		t.Fatal("DEVICE_IDENTITY request not detected")
-	}
-	session.deviceIdentityAsked = true
-	eap := []ikev2.Payload{&ikev2.EncryptedPayloadEAP{}}
-	response, err := session.withRequestedDeviceIdentity(eap)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := notifyTypes(response); len(got) != 1 || got[0] != ikev2.DEVICE_IDENTITY_3GPP {
-		t.Fatalf("response notifies = %v, want one DEVICE_IDENTITY_3GPP", got)
-	}
-	if again, _ := session.withRequestedDeviceIdentity(eap); len(notifyTypes(again)) != 0 {
-		t.Fatal("DEVICE_IDENTITY sent twice for one request")
 	}
 }
 

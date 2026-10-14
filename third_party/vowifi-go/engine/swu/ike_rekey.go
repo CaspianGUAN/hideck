@@ -227,6 +227,7 @@ func (s *Session) handlePeerIKESARekey(packet *ikev2.IKEPacket, payloads []ikev2
 	if oldDH != nil && oldDH != dh {
 		enginecrypto.Wipe(oldDH.SharedKey)
 	}
+	s.Logger.Info("peer IKE SA rekey installed")
 	s.markIKERekeyComplete()
 	installed = true
 	return nil

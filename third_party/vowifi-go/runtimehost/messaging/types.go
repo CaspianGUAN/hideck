@@ -33,6 +33,7 @@ type DeliveryStatus struct {
 	CreatedAt  time.Time            `json:"created_at"`
 	UpdatedAt  time.Time            `json:"updated_at"`
 	Parts      []DeliveryPartStatus `json:"parts"`
+	ICCID      string               `json:"iccid"`
 }
 
 // DeliveryPartStatus is the status of one SMS part.
@@ -151,6 +152,10 @@ type DeliveryStore interface {
 	GetSMSDeliveryStatus(messageID string) (*DeliveryStatus, error)
 }
 
+type IdentityDeliveryStore interface {
+	CreateSMSDeliveryForIdentity(record DeliveryRecord) error
+}
+
 // SubscriptionRejectionStore persists explicit 489 Bad Event responses across
 // runtime and process restarts. Expiration follows the associated IMS
 // registration lifetime so a genuinely new registration may probe again.
@@ -166,6 +171,7 @@ type SIPResultStore interface {
 	MarkSMSDeliveryPartSIPResult(messageID string, partNo, sipCode int, state, errText string, at time.Time) error
 }
 
+type DeliveryRecord = smsdelivery.DeliveryRecord
 type InboundFragmentOwner = smsdelivery.InboundFragmentOwner
 type InboundFragmentScope = smsdelivery.InboundFragmentScope
 type InboundFragment = smsdelivery.InboundFragment

@@ -53,7 +53,7 @@ function moveLongPress(event: PointerEvent) {
 
 function deliveryLabel(message: SMSMessage): string {
   if (message.type !== 2) return '已接收'
-  if (message.status === 2) return '已发送'
+  if (message.status === 2) return '已提交'
   if (message.status === 3) return '发送失败'
   return '发送状态未确认'
 }

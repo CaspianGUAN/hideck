@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/yibaiba/hideck/pkg/simidentity"
 )
 
 func (session *Session) readIdentity(ctx context.Context, pin string) (Identity, error) {
@@ -89,7 +91,7 @@ func readICCID(ctx context.Context, card Card) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("pcsc: read EF_ICCID: %w", err)
 	}
-	value := decodeSwappedBCD(data, false)
+	value := simidentity.DecodeICCID(data)
 	if len(value) < 18 || len(value) > 22 {
 		return "", errors.New("pcsc: card returned an invalid ICCID")
 	}

@@ -289,9 +289,25 @@ install_openwrt_service() {
 }
 
 install_openwrt_packages() {
-  command -v opkg >/dev/null 2>&1 || return 0
-  maybe_sudo opkg update || true
-  install_packages "maybe_sudo opkg install" libqmi kmod-usb-net-qmi-wwan kmod-usb-serial-option || true
+  if command -v opkg >/dev/null 2>&1; then
+    maybe_sudo opkg update || return 1
+    openwrt_installer="maybe_sudo opkg install"
+  elif command -v apk >/dev/null 2>&1; then
+    maybe_sudo apk update || return 1
+    openwrt_installer="maybe_sudo apk add"
+  else
+    printf 'OpenWrt 缺少 opkg/apk，无法安装运行依赖。\n' >&2
+    return 1
+  fi
+  openwrt_dependencies_failed=0
+  install_packages "$openwrt_installer" \
+    libqmi kmod-usb-net-qmi-wwan kmod-usb-serial-option \
+    lame-lib libopencore-amrnb libopencore-amrwb libvo-amrwbenc || openwrt_dependencies_failed=1
+  if modem_voice_requested; then
+    printf 'OpenWrt 模组直拨需要配套 hideck-adb 安装包；官方旧版 adb 不会替代它。\n'
+    install_packages "$openwrt_installer" hideck-adb alsa-utils kmod-usb-audio || openwrt_dependencies_failed=1
+  fi
+  return "$openwrt_dependencies_failed"
 }
 
 write_systemd_unit() {
@@ -354,13 +370,82 @@ install_systemd_service() {
     "$unit_source" "$unit_source" "$BINARY_PATH" "$CONFIG_FILE"
 }
 
-install_recording_libraries() {
-  printf '正在安装通话录音依赖（AMR/MP3）…\n'
-  if install_recording_libraries_with_pkg; then
-    printf '录音依赖已安装。\n'
+install_runtime_dependencies() {
+  printf '正在安装所选运行依赖…\n'
+  dependencies_failed=0
+  if ! install_runtime_dependencies_with_pkg; then
+    printf '运行依赖未装全，请处理上面的包管理器错误。\n' >&2
+    dependencies_failed=1
+  fi
+  if modem_voice_requested; then
+    if ! check_modem_voice_tools; then dependencies_failed=1; fi
+    if ! check_usb_audio_support; then dependencies_failed=1; fi
+  else
+    printf '未选择模组直拨依赖；OpenWrt 可另装 hideck-modem-voice 配套包。\n'
+  fi
+  if [ "$dependencies_failed" -eq 0 ]; then
+    printf '所选运行依赖检查通过；未执行真实通话测试。\n'
+  fi
+  return "$dependencies_failed"
+}
+
+modem_voice_requested() {
+  case "${HIDECK_MODEM_VOICE:-auto}" in
+    1) return 0 ;;
+    0) return 1 ;;
+    auto) ! is_openwrt ;;
+  esac
+}
+
+resolve_modem_voice_adb() {
+  voice_adb=/usr/libexec/hideck/adb
+  if [ -e "$voice_adb" ] || [ -L "$voice_adb" ]; then
+    if [ ! -x "$voice_adb" ]; then
+      printf 'HiDeck 专用 ADB 不可执行：%s\n' "$voice_adb" >&2
+      return 1
+    fi
     return 0
   fi
-  printf '录音依赖未装全。打电话不受影响，只是不会生成 MP3/渠道语音。\n也可改用 Docker：\n  curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | sh\n'
+  voice_adb=adb
+  command -v "$voice_adb" >/dev/null 2>&1 || {
+    printf '缺少 adb；OpenWrt 请先安装配套 hideck-adb 包。\n' >&2
+    return 1
+  }
+}
+
+check_modem_voice_tools() {
+  resolve_modem_voice_adb || return 1
+  for voice_tool in arecord aplay; do
+    if ! command -v "$voice_tool" >/dev/null 2>&1; then
+      printf '缺少 %s，模组直拨不可用。请安装 ADB 和 alsa-utils。\n' "$voice_tool" >&2
+      return 1
+    fi
+  done
+  # Help/version commands never start an ADB server or open a PCM device.
+  if ! adb_help=$("$voice_adb" help 2>&1); then
+    printf '无法执行 adb help：%s\n' "$adb_help" >&2
+    return 1
+  fi
+  if ! printf '%s\n' "$adb_help" | grep -Eq '^[[:space:]]*-t[[:space:]]'; then
+    printf 'ADB 不支持 transport-id（-t）；请升级 ADB，旧版 OpenWrt adb 不能用于模组直拨。\n' >&2
+    return 1
+  fi
+  if ! printf '%s\n' "$adb_help" | grep -Eq '^[[:space:]]*-L[[:space:]]'; then
+    printf 'ADB 不支持独立 server socket（-L）；请升级 ADB 后再使用模组直拨。\n' >&2
+    return 1
+  fi
+  "$voice_adb" version && arecord --version && aplay --version
+}
+
+check_usb_audio_support() {
+  # A disconnected modem has no /dev/snd nodes. Check the driver, not devices.
+  if [ -d /sys/bus/usb/drivers/snd-usb-audio ]; then
+    return 0
+  fi
+  if command -v modinfo >/dev/null 2>&1 && modinfo snd_usb_audio >/dev/null 2>&1; then
+    return 0
+  fi
+  printf '无法确认宿主机支持 snd_usb_audio。请安装与运行内核匹配的 USB 音频驱动（OpenWrt：kmod-usb-audio）；无需重启模组。\n' >&2
   return 1
 }
 
@@ -377,40 +462,48 @@ install_packages() {
   return "$failed"
 }
 
-install_recording_libraries_with_pkg() {
-  if command -v apt-get >/dev/null 2>&1; then
-    maybe_sudo apt-get update -y || return 1
-    install_packages "maybe_sudo apt-get install -y" \
-      libmp3lame0 libopencore-amrnb0 libopencore-amrwb0 libvo-amrwbenc0
+install_runtime_dependencies_with_pkg() {
+  # OpenWrt also uses apk; its package names are not Alpine package names.
+  if is_openwrt; then
+    install_openwrt_packages
     return $?
   fi
-  if command -v dnf >/dev/null 2>&1; then
-    install_packages "maybe_sudo dnf install -y" lame-libs opencore-amr vo-amrwbenc
+  for package_manager in apt-get dnf yum apk pacman; do
+    command -v "$package_manager" >/dev/null 2>&1 || continue
+    adb_package=android-tools
+    recording_packages='lame-libs opencore-amr vo-amrwbenc'
+    case "$package_manager" in
+      apt-get)
+        maybe_sudo apt-get update -y || return 1
+        package_operation='install -y'
+        adb_package=adb
+        recording_packages='libmp3lame0 libopencore-amrnb0 libopencore-amrwb0 libvo-amrwbenc0'
+        ;;
+      dnf|yum) package_operation='install -y' ;;
+      apk)
+        package_operation='add --no-cache'
+        adb_package=android-tools-adb
+        ;;
+      pacman)
+        package_operation='-S --needed --noconfirm'
+        recording_packages='lame opencore-amr vo-amrwbenc'
+        ;;
+    esac
+    voice_packages=
+    if modem_voice_requested; then voice_packages="$adb_package alsa-utils kmod"; fi
+    # These word lists contain only the fixed package names defined above.
+    install_packages "maybe_sudo $package_manager $package_operation" $voice_packages $recording_packages
     return $?
-  fi
-  if command -v yum >/dev/null 2>&1; then
-    install_packages "maybe_sudo yum install -y" lame-libs opencore-amr vo-amrwbenc
-    return $?
-  fi
-  if command -v apk >/dev/null 2>&1; then
-    install_packages "maybe_sudo apk add --no-cache" lame-libs opencore-amr vo-amrwbenc
-    return $?
-  fi
-  if command -v pacman >/dev/null 2>&1; then
-    install_packages "maybe_sudo pacman -Sy --noconfirm" lame opencore-amr vo-amrwbenc
-    return $?
-  fi
-  if command -v opkg >/dev/null 2>&1; then
-    maybe_sudo opkg update || return 1
-    install_packages "maybe_sudo opkg install" \
-      lame-lib libopencore-amrnb libopencore-amrwb libvo-amrwbenc
-    return $?
-  fi
-  printf '未识别的包管理器，请自行安装 libmp3lame、libopencore-amrnb、libopencore-amrwb、libvo-amrwbenc。\n'
+  done
+  printf '未识别的包管理器，请自行安装 ADB、alsa-utils、USB 音频驱动及 AMR/MP3 库。\n' >&2
   return 1
 }
 
 detect_os
+case "${HIDECK_MODEM_VOICE:-auto}" in
+  auto|0|1) ;;
+  *) printf 'HIDECK_MODEM_VOICE 必须为 auto、0 或 1。\n' >&2; exit 1 ;;
+esac
 require_command curl
 require_command uname
 
@@ -482,10 +575,13 @@ if ! install -m 755 "$DOWNLOAD_DIR/$ASSET_NAME" "$BINARY_PATH" 2>/dev/null; then
   maybe_sudo install -m 755 "$DOWNLOAD_DIR/$ASSET_NAME" "$BINARY_PATH"
 fi
 printf '已安装二进制：%s\n' "$BINARY_PATH"
-install_recording_libraries || true
+dependency_status=0
+if ! install_runtime_dependencies; then
+  dependency_status=1
+  printf '依赖检查未通过，继续安装 HiDeck 服务；这不表示模组直拨或录音已可用。\n' >&2
+fi
 
 if is_openwrt; then
-  install_openwrt_packages
   write_procd_init "$INIT_FILE" "$BINARY_PATH" "$CONFIG_FILE" "$PROJECT_DIR"
   install_openwrt_service "$INIT_FILE"
 else
@@ -494,3 +590,7 @@ else
 fi
 
 printf '\n浏览器打开：http://YOUR_IP:7575\n默认账号：admin / admin，首次登录后请立即改密。\n'
+if [ "$dependency_status" -ne 0 ]; then
+  printf '部署存在未解决的运行依赖问题，请按上述错误补齐后重新检查。\n' >&2
+fi
+exit "$dependency_status"

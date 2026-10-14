@@ -7,6 +7,7 @@ import {
   Subtract12Regular
 } from '@vicons/fluent'
 import type { DashboardDevice } from '../types/api'
+import type { DashboardConnectionStage } from '../utils/dashboardPresentation'
 import {
   canAnimateDashboardConnection,
   createDashboardDevicePresentation
@@ -22,7 +23,7 @@ const emit = defineEmits<{
   (event: 'open', deviceID?: string): void
 }>()
 
-const emptyStages = Object.freeze(['SIM', 'Access', 'Tunnel', 'IMS', 'SMS TX', 'SMS RX'].map(key => ({ key, ready: undefined })))
+const emptyStages: readonly DashboardConnectionStage[] = Object.freeze(['SIM', 'Access', 'Tunnel', 'IMS', 'SMS TX', 'SMS RX'].map(key => ({ key, ready: undefined })))
 const presentation = computed(() => props.device ? createDashboardDevicePresentation(props.device) : null)
 const stages = computed(() => presentation.value?.stages || emptyStages)
 const pathIsFlowing = computed(() => !!props.device && canAnimateDashboardConnection(props.device))
@@ -33,10 +34,11 @@ const focusMeta = computed(() => {
 const focusDetail = computed(() => {
   if (!props.device) return t('dashboard.addDeviceFirst')
   if (!props.device.healthy) return t('dashboard.deviceOffline')
+  if (props.device.phone_mode === 'modem_voice') return presentation.value?.connectionDetail
   if (presentation.value?.connectionKind === 'volte') {
     return t('dashboard.viaVolte')
   }
-  if (props.device.vowifi_active) return t('dashboard.viaWifiIms')
+  if (props.device.vowifi_active) return presentation.value?.connectionDetail || t('dashboard.viaWifiIms')
   return t('dashboard.vowifiInactive')
 })
 const primaryFact = computed(() => {
@@ -84,7 +86,7 @@ function stageStatusLabel(ready: boolean | undefined): string {
         class="connection-path"
         :class="{ 'is-flowing': pathIsFlowing }"
         :style="{ gridTemplateColumns: `repeat(${stages.length}, minmax(0, 1fr))` }"
-        :aria-label="presentation?.connectionKind === 'volte' ? t('dashboard.voltePath') : t('dashboard.vowifiPath')"
+        aria-label="通话服务链路"
       >
         <div class="connection-path-track" aria-hidden="true">
           <span class="connection-signal" />
@@ -97,14 +99,14 @@ function stageStatusLabel(ready: boolean | undefined): string {
             'is-ready': stage.ready === true,
             'is-failed': stage.ready === false
           }"
-          :aria-label="`${stage.key}：${stageStatusLabel(stage.ready)}`"
+          :aria-label="`${stage.key}：${stage.pending ? '待验证' : stageStatusLabel(stage.ready)}`"
         >
           <span aria-hidden="true">
             <Checkmark12Regular v-if="stage.ready === true" />
             <Dismiss12Regular v-else-if="stage.ready === false" />
             <Subtract12Regular v-else />
           </span>
-          <small>{{ stage.key }}</small>
+          <small>{{ stage.key }}<template v-if="stage.pending"> · 待验证</template></small>
         </div>
       </div>
     </div>
@@ -115,7 +117,7 @@ function stageStatusLabel(ready: boolean | undefined): string {
 
     <aside class="connection-stage-aside" :aria-label="t('dashboard.networkFacts')">
       <WiFiCallingHealth
-        v-if="device?.vowifi_health && presentation?.connectionKind !== 'volte'"
+        v-if="device?.vowifi_health && presentation?.connectionKind !== 'volte' && device?.phone_mode !== 'modem_voice'"
         :health="device.vowifi_health"
         mode="summary"
       />

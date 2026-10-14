@@ -32,17 +32,18 @@ func TestIsTransientVoLTEStartError(t *testing.T) {
 func TestNativeVoLTEScheduleCoalescesPerDevice(t *testing.T) {
 	pool := NewPool(nil)
 	defer pool.cancel()
-	if !pool.beginNativeVoLTESchedule("wwan0") {
+	first := pool.beginNativeVoLTESchedule("wwan0")
+	if first == nil {
 		t.Fatal("first VoLTE schedule was rejected")
 	}
-	if pool.beginNativeVoLTESchedule("wwan0") {
+	if pool.beginNativeVoLTESchedule("wwan0") != nil {
 		t.Fatal("duplicate VoLTE schedule was accepted")
 	}
-	if !pool.beginNativeVoLTESchedule("wwan1") {
+	if pool.beginNativeVoLTESchedule("wwan1") == nil {
 		t.Fatal("another device was blocked by wwan0")
 	}
-	pool.endNativeVoLTESchedule("wwan0")
-	if !pool.beginNativeVoLTESchedule("wwan0") {
+	pool.endNativeVoLTESchedule("wwan0", first)
+	if pool.beginNativeVoLTESchedule("wwan0") == nil {
 		t.Fatal("completed VoLTE schedule could not be started again")
 	}
 }

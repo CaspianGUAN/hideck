@@ -23,6 +23,8 @@ const (
 type VoiceGateway interface {
 	SubscribeIncomingCalls(func(voicehost.IncomingCall)) func()
 	SubscribeCallEvents(func(voicehost.CallEvent)) func()
+	// A nonempty snapshot with an error retains an uncertain dial for control;
+	// the error must still be exposed, not treated as successful dialing.
 	BeginCall(context.Context, voicehost.BeginCallRequest) (voicehost.CallSnapshot, error)
 	ActiveCall(deviceID string) *voicehost.CallSnapshot
 	AnswerIncomingCall(context.Context, voicehost.AnswerRequest) (voicehost.AnswerResult, error)
@@ -164,5 +166,8 @@ type activeCall struct {
 func (call *activeCall) snapshot(lease string) CallView {
 	view := call.view
 	view.ReadOnly = call.lease != "" && call.lease != lease
+	if call.lease == "" && view.Status == StatusConnected {
+		view.ReadOnly = true
+	}
 	return view
 }

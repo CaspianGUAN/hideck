@@ -8,6 +8,7 @@ import (
 
 	enginecrypto "github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
+	"go.uber.org/zap"
 )
 
 func TestEstablishedChildSARekeyValidatesResponseAndSwitchesSAs(t *testing.T) {
@@ -128,7 +129,7 @@ func TestPeerChildSARekeyIsValidatedAndAnswered(t *testing.T) {
 		InitiatorSPI: session.spiI, ResponderSPI: session.spiR,
 		Version: 0x20, ExchangeType: ikev2.ExchangeInformational, MessageID: 12,
 		Payloads: []ikev2.Payload{&ikev2.EncryptedPayloadDelete{
-			ProtocolID: ikev2.ProtoESP, SPISize: 4, NumSPIs: 1, SPIs: spiBytes(oldLocalSPI),
+			ProtocolID: ikev2.ProtoESP, SPISize: 4, NumSPIs: 1, SPIs: spiBytes(oldRemoteSPI),
 		}},
 	}
 	raw, err = session.encryptAndWrap(request)
@@ -146,7 +147,7 @@ func TestPeerChildSARekeyIsValidatedAndAnswered(t *testing.T) {
 	if !allZero(oldInbound.EncryptionKey) || !allZero(oldInbound.IntegrityKey) {
 		t.Fatal("peer-deleted CHILD_SA keys were not wiped")
 	}
-	assertChildSADeleteResponse(t, session, transport, oldRemoteSPI)
+	assertChildSADeleteResponse(t, session, transport, oldLocalSPI)
 }
 
 func assertChildSADeleteResponse(
@@ -182,16 +183,16 @@ func assertRetiredChildSA(t *testing.T, session *Session, remoteSPI, localSPI ui
 	}
 }
 
-func newEstablishedControlSession(t *testing.T) (*Session, *testIKETransport) {
+func newEstablishedControlSession(t *testing.T, loggers ...*zap.Logger) (*Session, *testIKETransport) {
 	t.Helper()
 	return newEstablishedControlSessionWithConfig(t, &Config{Retransmit: &RetransmitConfig{
 		MaxRetries: 0, InitialDelay: 200 * time.Millisecond, Backoff: 1,
-	}})
+	}}, loggers...)
 }
 
-func newEstablishedControlSessionWithConfig(t *testing.T, config *Config) (*Session, *testIKETransport) {
+func newEstablishedControlSessionWithConfig(t *testing.T, config *Config, loggers ...*zap.Logger) (*Session, *testIKETransport) {
 	t.Helper()
-	session := NewSession(config)
+	session := NewSession(config, loggers...)
 	transport := newTestIKETransport()
 	session.socket = transport
 	copy(session.spiI[:], []byte("init-spi"))
@@ -227,7 +228,8 @@ func respondToChildSARekey(
 	oldLocalSPI := session.espLocalSPI
 	session.childSAMu.RUnlock()
 	oldRemoteSPI := respondToChildSARekeyResponse(t, session, transport, remoteSPI, responderNonce)
-	respondToChildSADelete(t, session, transport, oldRemoteSPI, oldLocalSPI)
+	// Our Delete names our old inbound SPI; the ePDG answers with its own.
+	respondToChildSADelete(t, session, transport, oldLocalSPI, oldRemoteSPI)
 }
 
 func respondToChildSARekeyResponse(
@@ -429,6 +431,26 @@ func TestInitiatedIKESARekeyRetainsOldKeysWhenDeleteTimesOut(t *testing.T) {
 	session.mu.RUnlock()
 	if !retained {
 		t.Fatal("timed-out old IKE SA Delete did not retain the old protection context")
+	}
+}
+
+func TestIKESARekeyDropsStaleRetiredSA(t *testing.T) {
+	session, transport := newEstablishedControlSession(t)
+	defer stopControlTestSession(session)
+	staleKeys := cloneIKEKeysForTest(session.ikeKeys)
+	session.retiredIKESA = &ikeSAContext{keys: staleKeys, localInitiator: true}
+	peerDone := make(chan struct{})
+	go func() {
+		defer close(peerDone)
+		respondToIKESARekey(t, session, transport)
+	}()
+	err := session.RekeyIKESA()
+	<-peerDone
+	if err != nil {
+		t.Fatalf("RekeyIKESA with a stale retired SA: %v", err)
+	}
+	if !retiredIKEKeysCleared(session, staleKeys) {
+		t.Fatal("stale retired IKE SA was not dropped and wiped")
 	}
 }
 

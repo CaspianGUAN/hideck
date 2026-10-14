@@ -75,7 +75,7 @@ func TestCommitRegisterSuccessRecordsOnlyNegotiatedGRUU(t *testing.T) {
 	if service.GetPubGRUU() != "" || service.GetTempGRUU() != "" {
 		t.Fatal("service fabricated a GRUU before registration")
 	}
-	session := &registerSession{contactUser: "contact", expires: time.Hour}
+	session := &registerSession{contactUser: "contact", requestContact: "<sip:user@ims.example>", expires: time.Hour}
 	response := &sipResponse{Headers: map[string]string{
 		"Contact": `<sip:user@ims.example>;pub-gruu="sip:user@ims.example;gr=public";temp-gruu="sip:temp@ims.example;gr=temporary"`,
 	}}

@@ -1,5 +1,7 @@
 package phone
 
+import "github.com/yibaiba/hideck/pkg/g711"
+
 // MuLawToPCM decodes one G.711 µ-law sample. Native VoLTE PCMU uses this path.
 func MuLawToPCM(value byte) int16 {
 	return muLawToPCM(value)
@@ -11,31 +13,11 @@ func PCMToMuLaw(sample int16) byte {
 }
 
 func muLawToPCM(value byte) int16 {
-	value = ^value
-	magnitude := ((int(value&0x0f) << 3) + 0x84) << ((value & 0x70) >> 4)
-	if value&0x80 != 0 {
-		return int16(0x84 - magnitude)
-	}
-	return int16(magnitude - 0x84)
+	return g711.DecodeSample(value)
 }
 
 func pcmToMuLaw(sample int16) byte {
-	value := int(sample)
-	sign := byte(0)
-	if value < 0 {
-		sign = 0x80
-		value = -value
-	}
-	if value > 32635 {
-		value = 32635
-	}
-	value += 0x84
-	exponent := 7
-	for mask := 0x4000; exponent > 0 && value&mask == 0; mask >>= 1 {
-		exponent--
-	}
-	mantissa := (value >> (exponent + 3)) & 0x0f
-	return ^(sign | byte(exponent<<4) | byte(mantissa))
+	return g711.EncodeSample(sample)
 }
 
 func aLawToPCM(value byte) int16 {

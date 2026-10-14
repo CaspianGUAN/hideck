@@ -1,0 +1,34 @@
+#!/bin/sh
+set -eu
+
+fail() {
+  printf '%s\n' "$1" >&2
+  if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then printf '%s\n' "$1" > "$TRIM_TEMP_LOGFILE"; fi
+  exit 1
+}
+
+for directory in "${TRIM_APPDEST:-}" "${TRIM_PKGETC:-}" "${TRIM_PKGVAR:-}"; do
+  case "$directory" in
+    /*) ;;
+    *) fail '缺少飞牛应用绝对路径，不能初始化 HiDeck。' ;;
+  esac
+done
+
+# Only our newly created files inherit this mode; existing user data is untouched.
+umask 077
+mkdir -p "$TRIM_PKGETC" "$TRIM_PKGVAR/data" "$TRIM_PKGVAR/logs" || fail '无法创建 HiDeck 数据目录。'
+config_file="$TRIM_PKGETC/config.yaml"
+if [ -f "$config_file" ]; then exit 0; fi
+if [ -e "$config_file" ] || [ -L "$config_file" ]; then
+  fail 'config.yaml 不是有效的配置文件，请检查原有路径；未覆盖。'
+fi
+
+template="$TRIM_APPDEST/defaults/config.example.yaml"
+[ -r "$template" ] || fail '安装包缺少 HiDeck 默认配置。'
+temporary_file=$(mktemp "$TRIM_PKGETC/.config.yaml.XXXXXX")
+trap 'rm -f "$temporary_file"' EXIT
+trap 'exit 1' HUP INT TERM
+cp "$template" "$temporary_file" || fail '无法写入 HiDeck 默认配置。'
+chmod 600 "$temporary_file"
+# Link atomically without replacing a configuration created concurrently.
+ln "$temporary_file" "$config_file" || fail '配置文件已存在或不能创建，未覆盖原文件。'

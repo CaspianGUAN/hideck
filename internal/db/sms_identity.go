@@ -30,14 +30,30 @@ type SMSRecord struct {
 	Timestamp  time.Time
 }
 
+// SMSDeviceSelector pins a lookup to the physical modem when its IMEI is known.
+// DeviceID is only used for legacy bindings without a physical identity.
+type SMSDeviceSelector struct {
+	DeviceID string
+	IMEI     string
+}
+
 func LookupDeviceSMSIdentity(deviceID string) (SMSIdentity, bool, error) {
-	deviceID = strings.TrimSpace(deviceID)
-	if DB == nil || deviceID == "" {
+	return LookupSMSIdentityForDevice(SMSDeviceSelector{DeviceID: deviceID})
+}
+
+func LookupSMSIdentityForDevice(selector SMSDeviceSelector) (SMSIdentity, bool, error) {
+	deviceID := strings.TrimSpace(selector.DeviceID)
+	imei := strings.TrimSpace(selector.IMEI)
+	if DB == nil || (deviceID == "" && imei == "") {
 		return SMSIdentity{}, false, nil
 	}
 
+	query := DB.Where("alias = ? OR imei = ?", deviceID, deviceID)
+	if imei != "" {
+		query = DB.Where("imei = ?", imei)
+	}
 	var devices []Device
-	if err := DB.Where("alias = ? OR imei = ?", deviceID, deviceID).Limit(2).Find(&devices).Error; err != nil {
+	if err := query.Select("iccid").Find(&devices).Error; err != nil {
 		return SMSIdentity{}, false, err
 	}
 	identity, found, err := uniqueBoundSMSIdentity(devices)
@@ -121,12 +137,17 @@ func SaveSMSForIdentity(input SMSRecord) error {
 	recipient := strings.TrimSpace(input.Recipient)
 	sms := SMS{
 		IMSI: input.Identity.IMSI, ICCID: input.Identity.ICCID,
-		Peer:       normalizeSMSPeer(input.Type, sender, recipient),
-		LocalPhone: normalizeSMSLocalPhone(input.Identity.IMSI, input.Type, input.LocalPhone, sender, recipient),
-		Sender:     sender, Recipient: recipient, Content: input.Content,
+		Peer: normalizeSMSPeer(input.Type, sender, recipient),
+		LocalPhone: normalizeSMSLocalPhoneForIdentity(smsLocalPhoneInput{
+			Identity: input.Identity, Type: input.Type,
+			LocalPhone: input.LocalPhone, Sender: sender, Recipient: recipient,
+		}),
+		Sender: sender, Recipient: recipient, Content: input.Content,
 		Type: input.Type, Status: input.Status, Timestamp: input.Timestamp.Truncate(time.Second),
 	}
-	return DB.Transaction(func(tx *gorm.DB) error {
+	smsPublicationMu.Lock()
+	defer smsPublicationMu.Unlock()
+	err := DB.Transaction(func(tx *gorm.DB) error {
 		if err := validateSMSIdentityMapping(tx, input.Identity); err != nil {
 			return err
 		}
@@ -138,6 +159,10 @@ func SaveSMSForIdentity(input SMSRecord) error {
 		}
 		return upsertSMSContactFromSMS(tx, &sms)
 	})
+	if err == nil {
+		publishIncomingSMS(sms)
+	}
+	return err
 }
 
 func validateSMSIdentityMapping(tx *gorm.DB, identity SMSIdentity) error {

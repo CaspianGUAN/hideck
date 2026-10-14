@@ -78,6 +78,39 @@ func TestVoWiFiSMSHistoryRecorderPersistsSentSMS(t *testing.T) {
 	}
 }
 
+func TestVoWiFiSMSHistoryRecorderUsesCapturedSentSIM(t *testing.T) {
+	initDevicePhoneNumberTestDB(t)
+	const (
+		imsi     = "234150000000077"
+		oldICCID = "8944100000000000077"
+		newICCID = "8944100000000000078"
+	)
+	for _, iccid := range []string{oldICCID, newICCID} {
+		if err := db.UpsertSIMCardIdentity(iccid, imsi, "", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := NewPool(nil)
+	w := &Worker{ID: "dev-sent"}
+	setWorkerSMSIdentity(w, SMSIdentity{ICCID: newICCID, IMSI: imsi})
+	p.workers[w.ID] = w
+
+	err := vowifiSMSHistoryRecorder{pool: p}.RecordSent(eventhost.SMSSent{
+		DevID: w.ID, ICCID: oldICCID, IMSI: imsi,
+		TargetURI: "+10010", Content: "sent before switch", Time: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sms db.SMS
+	if err := db.DB.Where("content = ?", "sent before switch").First(&sms).Error; err != nil {
+		t.Fatal(err)
+	}
+	if sms.ICCID != oldICCID {
+		t.Fatalf("sent SMS ICCID=%q want captured %q", sms.ICCID, oldICCID)
+	}
+}
+
 func TestVoWiFiSMSHistoryRecorderPersistsReceivedSMS(t *testing.T) {
 	initDevicePhoneNumberTestDB(t)
 	if err := db.UpdateSIMCardVoWiFiPhoneNumberByIMSI("imsi-vowifi-2", "+8613900000000"); err != nil {
@@ -103,6 +136,109 @@ func TestVoWiFiSMSHistoryRecorderPersistsReceivedSMS(t *testing.T) {
 	}
 	if sms.Sender != "+10086" || sms.Recipient != "+8613900000000" || sms.Content != "inbound" || sms.Status != 0 {
 		t.Fatalf("received sms=%+v", sms)
+	}
+}
+
+func TestVoWiFiSMSHistoryRecorderKeepsCapturedSIMAfterProfileSwitch(t *testing.T) {
+	for _, multipart := range []bool{false, true} {
+		t.Run(map[bool]string{false: "single", true: "multipart"}[multipart], func(t *testing.T) {
+			initDevicePhoneNumberTestDB(t)
+			const (
+				imsi     = "234150000000046"
+				oldICCID = "8944100000000000046"
+				newICCID = "8944100000000000047"
+			)
+			if err := db.UpsertSIMCardIdentity(oldICCID, imsi, "", nil); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.UpsertSIMCardIdentity(newICCID, imsi, "", nil); err != nil {
+				t.Fatal(err)
+			}
+			event := eventhost.SMSReceived{
+				DevID: "dev-switch", Sender: "+10086", Content: "captured identity",
+				Time: time.Date(2026, 10, 14, 13, 0, 0, 0, time.UTC),
+			}
+			if multipart {
+				event.FragmentSessionKey = "ref=46"
+			}
+			result, err := (vowifiSMSHistoryRecorder{}).recordReceived(event, SMSIdentity{
+				ICCID: oldICCID, IMSI: imsi,
+			})
+			if err != nil || !result.Stored {
+				t.Fatalf("recordReceived() result=%+v err=%v", result, err)
+			}
+			var stored db.SMS
+			if err := db.DB.Where("content = ?", event.Content).Take(&stored).Error; err != nil {
+				t.Fatal(err)
+			}
+			if stored.ICCID != oldICCID {
+				t.Fatalf("stored ICCID=%q, want captured %q", stored.ICCID, oldICCID)
+			}
+		})
+	}
+}
+
+func TestResolveReceivingIdentityDoesNotMixPartialCacheWithBackend(t *testing.T) {
+	p := NewPool(nil)
+	w := &Worker{
+		ID: "dev-switching",
+		Backend: &workerPhoneBackendStub{
+			imsi: "234150000000099",
+		},
+	}
+	w.state.Identity.Ready = true
+	w.state.Identity.ICCID = "8944100000000000098"
+	p.workers[w.ID] = w
+
+	got := (vowifiSMSHistoryRecorder{pool: p}).resolveReceivingIdentity(w.ID)
+	if got.ICCID != "8944100000000000098" || got.IMSI != "" {
+		t.Fatalf("identity=%+v, want one coherent partial cache snapshot", got)
+	}
+}
+
+func TestVoWiFiSMSHistoryRecorderUsesCapturedSIMPhoneNumber(t *testing.T) {
+	initDevicePhoneNumberTestDB(t)
+	const (
+		imsi     = "234150000000097"
+		oldICCID = "8944100000000000097"
+		newICCID = "8944200000000000096"
+	)
+	if err := db.DB.Create(&db.SIMCard{ICCID: oldICCID, IMSI: imsi}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DB.Create(&db.SIMCard{ICCID: newICCID, IMSI: imsi}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DB.Create(&db.SIMSubscription{IMSI: imsi, CurrentICCID: newICCID}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateSIMCardVoWiFiPhoneNumberByIMSI(imsi, "+447700900096"); err != nil {
+		t.Fatal(err)
+	}
+	var subscription db.SIMSubscription
+	if err := db.DB.First(&subscription, "imsi = ?", imsi).Error; err != nil {
+		t.Fatal(err)
+	}
+	if subscription.CurrentICCID != newICCID {
+		t.Fatalf("subscription ICCID=%q, want %q", subscription.CurrentICCID, newICCID)
+	}
+	phone, err := db.GetPhoneNumberForSMSIdentity(db.SMSIdentity{ICCID: oldICCID, IMSI: imsi})
+	if err != nil || phone != "" {
+		t.Fatalf("captured identity phone=%q err=%v, want no cross-profile fallback", phone, err)
+	}
+
+	result, err := (vowifiSMSHistoryRecorder{}).recordReceived(eventhost.SMSReceived{
+		Sender: "+10086", Content: "old profile", Time: time.Now(),
+	}, SMSIdentity{ICCID: oldICCID, IMSI: imsi})
+	if err != nil || !result.Stored {
+		t.Fatalf("recordReceived() result=%+v err=%v", result, err)
+	}
+	var stored db.SMS
+	if err := db.DB.Where("content = ?", "old profile").Take(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.LocalPhone != "" {
+		t.Fatalf("local phone=%q, must not use the different profile number", stored.LocalPhone)
 	}
 }
 
@@ -199,7 +335,9 @@ func TestVoWiFiSMSHistoryRecorderPersistsSendFailure(t *testing.T) {
 	p := NewPool(nil)
 	p.workers["dev-fail"] = &Worker{ID: "dev-fail", Backend: &workerPhoneBackendStub{imsi: "imsi-fail"}}
 
-	err := vowifiSMSHistoryRecorder{pool: p}.RecordSendFailure("dev-fail", "+10010", "failed sms", time.Now())
+	err := vowifiSMSHistoryRecorder{pool: p}.RecordSendFailure(VoWiFiSMSSendFailure{
+		DeviceID: "dev-fail", Target: "+10010", Content: "failed sms", At: time.Now(),
+	})
 	if err != nil {
 		t.Fatalf("RecordSendFailure() error=%v", err)
 	}
@@ -209,6 +347,30 @@ func TestVoWiFiSMSHistoryRecorderPersistsSendFailure(t *testing.T) {
 		t.Fatalf("First(failed sms) error=%v", err)
 	}
 	if sms.Recipient != "+10010" || sms.Content != "failed sms" {
+		t.Fatalf("failed sms=%+v", sms)
+	}
+}
+
+func TestVoWiFiSMSHistoryRecorderKeepsCapturedIdentityForSendFailure(t *testing.T) {
+	initDevicePhoneNumberTestDB(t)
+	p := NewPool(nil)
+	w := &Worker{ID: "dev-fail-swap", Backend: &workerPhoneBackendStub{imsi: "imsi-new"}}
+	p.workers[w.ID] = w
+	setWorkerSMSIdentity(w, SMSIdentity{ICCID: "8944000000000000999", IMSI: "imsi-new"})
+
+	err := vowifiSMSHistoryRecorder{pool: p}.RecordSendFailure(VoWiFiSMSSendFailure{
+		DeviceID: w.ID, Target: "+10010", Content: "failed before swap",
+		Identity: SMSIdentity{ICCID: "8944000000000000111", IMSI: "imsi-old"}, At: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("RecordSendFailure() error=%v", err)
+	}
+
+	var sms db.SMS
+	if err := db.DB.Where("iccid = ? AND imsi = ?", "8944000000000000111", "imsi-old").First(&sms).Error; err != nil {
+		t.Fatalf("First(failed sms) error=%v", err)
+	}
+	if sms.Recipient != "+10010" || sms.Content != "failed before swap" {
 		t.Fatalf("failed sms=%+v", sms)
 	}
 }

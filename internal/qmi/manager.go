@@ -2176,6 +2176,20 @@ func (m *Manager) VOICEBurstDTMF(ctx context.Context, callID uint8, digits strin
 	return m.qmiMgr.VOICEBurstDTMF(ctx, callID, digits)
 }
 
+func (m *Manager) VOICEStartContinuousDTMF(ctx context.Context, callID, digit uint8) (uint8, error) {
+	if m == nil || m.qmiMgr == nil {
+		return 0, qmimanager.ErrServiceNotReady("VOICE")
+	}
+	return m.qmiMgr.VOICEStartContinuousDTMF(ctx, callID, digit)
+}
+
+func (m *Manager) VOICEStopContinuousDTMF(ctx context.Context, callID uint8) (uint8, error) {
+	if m == nil || m.qmiMgr == nil {
+		return 0, qmimanager.ErrServiceNotReady("VOICE")
+	}
+	return m.qmiMgr.VOICEStopContinuousDTMF(ctx, callID)
+}
+
 func (m *Manager) VOICEAnswerCall(ctx context.Context, callID uint8) (uint8, error) {
 	if m == nil || m.qmiMgr == nil {
 		return 0, qmimanager.ErrServiceNotReady("VOICE")

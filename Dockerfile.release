@@ -1,7 +1,7 @@
 # 发版镜像：把 dist/ 里已经 UPX 打好的二进制放进 Debian 底包。
 # Alpine + gcompat 跑不了 UPX 5 的 stub（Not a valid dynamic program）；glibc 可以。
 # 需要先有 hideck_<VERSION>_linux_amd64 和 linux_arm64，例如 hideck_v2.1.9_linux_amd64。
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim AS runtime-base
 ARG VERSION=unknown
 ARG BUILDTIME=unknown
 ARG REVISION=unknown
@@ -16,19 +16,30 @@ LABEL org.opencontainers.image.title="HiDeck" \
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
+      adb \
+      alsa-utils \
       ca-certificates \
       libmp3lame0 \
       libopencore-amrnb0 \
       libopencore-amrwb0 \
       libqmi-utils \
+      libpcsclite1 \
       libvo-amrwbenc0 \
       psmisc \
       tzdata \
       wget \
  && rm -rf /var/lib/apt/lists/* \
  && test -x /usr/libexec/qmi-proxy \
+ && adb version && arecord --version && aplay --version \
+ && adb help > /tmp/hideck-adb-help 2>&1 \
+ && grep -Eq '^[[:space:]]*-t[[:space:]]' /tmp/hideck-adb-help \
+ && grep -Eq '^[[:space:]]*-L[[:space:]]' /tmp/hideck-adb-help \
+ && rm /tmp/hideck-adb-help \
  && mkdir -p /app/config /app/data /app/logs
 
+FROM runtime-base AS runtime
+ARG VERSION=unknown
+ARG TARGETARCH
 COPY dist/hideck_${VERSION}_linux_${TARGETARCH} /usr/local/bin/hideck
 RUN chmod 0755 /usr/local/bin/hideck \
  && /usr/local/bin/hideck -c /nonexistent.yaml >/tmp/hideck-boot.txt 2>&1 || true \

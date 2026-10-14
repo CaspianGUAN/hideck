@@ -43,15 +43,27 @@ func (p *Pool) SendVoWiFiSMSWithResult(ctx context.Context, deviceID, to, text s
 }
 
 func (p *Pool) SendVoWiFiSMSWithOptions(ctx context.Context, deviceID, to, text string, opts smscodec.SubmitOptions) (messaging.SendOutcome, error) {
+	worker := p.GetWorker(deviceID)
+	check := p.outboundOwnerCheck(worker)
+	if err := p.authorizeSMS(ctx, outboundSMSRequest{Worker: worker, To: to, Text: text, Options: opts}); err != nil {
+		return messaging.SendOutcome{}, err
+	}
+	return p.sendVoWiFiSMS(ctx, voWiFiSMSSendRequest{
+		DeviceID: deviceID, To: to, Text: text, Check: check,
+		Acquire: func() (func(), error) { return p.acquireOutboundOperation(worker) },
+		Options: messaging.SendOptions{Encoding: string(opts.Encoding)},
+	})
+}
+
+func (p *Pool) sendVoWiFiSMS(ctx context.Context, request voWiFiSMSSendRequest) (messaging.SendOutcome, error) {
 	waitCtx, cancel := context.WithTimeout(contextOrBackground(ctx), voWiFiSMSSendRecoveryTimeout)
 	defer cancel()
-	updates, unsubscribe := p.SubscribeVoWiFiState(deviceID)
+	updates, unsubscribe := p.SubscribeVoWiFiState(request.DeviceID)
 	defer unsubscribe()
-	return sendVoWiFiSMSWhenReady(waitCtx, voWiFiSMSSendRequest{
-		DeviceID: deviceID, To: to, Text: text,
-		Options: messaging.SendOptions{Encoding: string(opts.Encoding)}, Updates: updates,
-		Runtime: func() voWiFiSMSRuntime { return p.voWiFiHost().Instance(deviceID) },
-	})
+	sendRequest := request
+	sendRequest.Updates = updates
+	sendRequest.Runtime = func() voWiFiSMSRuntime { return p.voWiFiHost().Instance(request.DeviceID) }
+	return sendVoWiFiSMSWhenReady(waitCtx, sendRequest)
 }
 
 func (p *Pool) IsVoWiFiActive(deviceID string) bool {
@@ -70,6 +82,10 @@ func (p *Pool) SetVoWiFiSMSMemoryFull(deviceID string, full bool) {
 
 func (p *Pool) ShouldRouteSMSViaVoWiFi(deviceID string) bool {
 	if p == nil {
+		return false
+	}
+	// An old IMS runtime may still be tearing down during a mode switch.
+	if w := p.GetWorker(deviceID); w != nil && IsModemVoiceMode(w.Config.PhoneMode) {
 		return false
 	}
 	if p.IsVoWiFiActive(deviceID) {

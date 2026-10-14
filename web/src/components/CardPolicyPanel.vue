@@ -285,7 +285,7 @@ const airplaneHint = computed(() => {
         </div>
 
         <div class="policy-setting-row" :class="{ 'is-active': local.phone_mode === 'cellular' || local.phone_mode === 'volte' }">
-          <span><strong>通话方式</strong><small>切换会按该方式启动。WiFi calling 开飞行；蜂窝走软件 IMS 数据；VoLTE 走模组原生 IMS</small></span>
+          <span><strong>通话方式</strong><small>WiFi calling 使用飞行模式；其他方式需要驻网。模组直拨使用设备的通话和 USB 音频能力。</small></span>
           <div class="policy-field-control">
             <el-select
               :model-value="local.phone_mode ?? 'wifi'"
@@ -296,6 +296,7 @@ const airplaneHint = computed(() => {
               <el-option label="WiFi calling" value="wifi" />
               <el-option label="蜂窝数据" value="cellular" :disabled="rfLocked" />
               <el-option label="VoLTE" value="volte" :disabled="rfLocked" />
+              <el-option label="模组直拨" value="modem_voice" :disabled="rfLocked" />
             </el-select>
             <small v-if="phoneModePending">正在切换...</small>
             <div v-if="phoneModeFailed" class="text-xs text-orange-500 dark:text-orange-400">切换未生效</div>
@@ -307,7 +308,7 @@ const airplaneHint = computed(() => {
           :class="{ 'is-active': local.vowifi_enabled }"
         >
           <span>
-            <strong>{{ (local.phone_mode ?? 'wifi') === 'wifi' ? '启动' : '软件电话' }}</strong>
+            <strong>{{ (local.phone_mode ?? 'wifi') === 'wifi' ? '启动' : '电话服务' }}</strong>
             <small>{{ (local.phone_mode ?? 'wifi') === 'wifi'
               ? '打开后开始注册。关掉只停服务，仍是 WiFi calling'
               : '开启后可拨号。关掉只停服务，通话方式不变' }}</small>

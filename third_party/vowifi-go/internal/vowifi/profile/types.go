@@ -25,6 +25,7 @@ const (
 )
 
 type Profile struct {
+	ICCID     string
 	IMSI      string
 	MCC       string
 	MNC       string

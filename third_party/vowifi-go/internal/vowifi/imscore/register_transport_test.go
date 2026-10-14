@@ -605,12 +605,12 @@ func TestRegistrationRefreshesBeforeExpiryAndReportsFailure(t *testing.T) {
 	}
 }
 
-func TestRegistrationExpiresPrefersExpiresHeader(t *testing.T) {
+func TestRegistrationExpiresPrefersOwnContact(t *testing.T) {
 	response := &sipResponse{Headers: map[string]string{
 		"Contact": "<sip:user@10.0.0.2>;expires=120", "Expires": "3600",
 	}}
-	if got := registrationExpires(response, time.Hour); got != time.Hour {
-		t.Fatalf("registrationExpires = %s, want 1h", got)
+	if got, err := registrationExpires(response, "<sip:user@10.0.0.2>", time.Hour); err != nil || got != 120*time.Second {
+		t.Fatalf("registrationExpires = %s, %v, want 120s", got, err)
 	}
 }
 
@@ -804,6 +804,13 @@ func serveRegistrationSequence(conn *net.UDPConn, seen chan<- string, statuses [
 }
 
 func registerWireResponse(request string, status int, extraHeaders string) string {
+	if status >= 200 && status < 300 && sipRequestMethod(request) == "REGISTER" && !strings.Contains(strings.ToLower(extraHeaders), "contact:") {
+		contact := sipHeaderValue(request, "Contact")
+		start, end := sipAddressSpan(contact)
+		if contact != "*" && end > start {
+			extraHeaders += "Contact: <" + contact[start:end] + ">\r\n"
+		}
+	}
 	return fmt.Sprintf(
 		"SIP/2.0 %d Test\r\nVia: %s\r\nCall-ID: %s\r\nCSeq: %s\r\n%sContent-Length: 0\r\n\r\n",
 		status,

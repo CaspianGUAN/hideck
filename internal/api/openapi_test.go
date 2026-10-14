@@ -54,7 +54,7 @@ func TestOpenAPIHiDeckYAMLValid(t *testing.T) {
 		t.Fatal("openapi.hideck.yaml missing MBIM/PCSC device and eSIM transport contract")
 	}
 	for _, field := range []string{
-		"wecom_bot:", "allowed_group_ids:", "manual_setup_available:",
+		"wecom_bot:", "allowed_group_ids:", "manual_setup_available:", "device_filters:",
 		"bound_chat_id:", "BotFather 签发的 Bot Token", "授权管理员首次私聊自动绑定",
 	} {
 		if !strings.Contains(string(data), field) {

@@ -64,8 +64,13 @@ export const usePhoneStore = defineStore('phone', {
     isCallEnding(state) {
       return (callId: string) => state.endingCallIds.includes(callId)
     },
+    canSendDTMF(): boolean {
+      const call = this.currentCall
+      return !!call && call.status === 'connected' && !call.held && !call.read_only
+        && !this.isCallEnding(call.call_id)
+    },
     mediaReady(state) {
-      return state.mediaState === 'connecting' || state.mediaState === 'connected'
+      return state.mediaState === 'connected'
     },
     secureContext() {
       return typeof window !== 'undefined' && window.location.protocol === 'https:' && window.isSecureContext
@@ -146,8 +151,10 @@ export const usePhoneStore = defineStore('phone', {
       }
     },
 
-    async takeOver(call: PhoneCall) {
-      const prepared = await this.prepareMedia()
+    async takeOver(call: PhoneCall, mode: Exclude<PhoneMediaMode, 'none'> = 'two-way') {
+      const prepared = mode === 'listen-only'
+        ? await this.prepareReceiveOnlyMedia()
+        : await this.prepareMedia()
       try {
         const result = await phoneService.refreshMedia(call.call_id, prepared.mediaId, '', true)
         this.lease = result.lease
@@ -236,6 +243,7 @@ export const usePhoneStore = defineStore('phone', {
     async sendDTMF(digit: string) {
       const call = this.currentCall
       if (!call) throw new Error('当前没有活动电话')
+      if (!this.canSendDTMF) throw new Error('当前通话不可发送按键，请确认通话已接通且由本页面控制')
       await phoneService.dtmf(call.call_id, digit, this.lease)
     },
 
@@ -406,6 +414,7 @@ export const usePhoneStore = defineStore('phone', {
       mediaController = null
       this.mediaId = ''
       this.lease = ''
+      this.calls = this.calls.map((call) => normalizeCallOwnership(call, ''))
       this.mediaState = 'idle'
       this.mediaMode = 'none'
       this.muted = false

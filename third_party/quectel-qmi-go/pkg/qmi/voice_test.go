@@ -88,6 +88,17 @@ func TestBuildVoiceBurstDTMFTLV(t *testing.T) {
 	}
 }
 
+func TestBuildVoiceContinuousDTMFTLVs(t *testing.T) {
+	start := buildVoiceStartContinuousDTMFTLV(0x05, '#')
+	if start.Type != 0x01 || len(start.Value) != 2 || start.Value[0] != 0x05 || start.Value[1] != '#' {
+		t.Fatalf("unexpected start continuous DTMF TLV: %+v", start)
+	}
+	stop := buildVoiceStopContinuousDTMFTLV(0x05)
+	if stop.Type != 0x01 || len(stop.Value) != 1 || stop.Value[0] != 0x05 {
+		t.Fatalf("unexpected stop continuous DTMF TLV: %+v", stop)
+	}
+}
+
 func TestBuildVoiceManageCallsTLVs(t *testing.T) {
 	tlvs := buildVoiceManageCallsTLVs(VoiceManageCallsRequest{
 		ServiceType: 0x03,

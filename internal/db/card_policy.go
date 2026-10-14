@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yibaiba/hideck/pkg/simidentity"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -30,14 +32,11 @@ func (CardPolicy) TableName() string { return "card_policies" }
 // VoWiFiUpstreamProxyDirect 表示这张卡强制直连，不走国家前置代理。
 const VoWiFiUpstreamProxyDirect = "direct"
 
-// CanonicalICCID 规整 ICCID 为唯一形态：trim 空白、去引号、去尾部 BCD 填充位 F/f。
+// CanonicalICCID 统一大小写和空白，只去除末尾填充 F，保留中间 A-F。
 // 必须用于 card_policies 的所有读写边界——否则 eSIM profile 侧（BCD 解码已剥 F）与
 // 运行时身份侧（QMI DMS 原样保留 F）会落成两行不同的策略，UI 读到的对不上。
 func CanonicalICCID(iccid string) string {
-	v := strings.TrimSpace(iccid)
-	v = strings.Trim(v, "\"")
-	v = strings.TrimRight(v, "Ff")
-	return v
+	return simidentity.CanonicalICCID(iccid)
 }
 
 // DefaultCardPolicy 是新卡自动建档用的硬编码安全默认（不落配置文件）。
@@ -73,7 +72,7 @@ func NormalizeCardPolicy(p *CardPolicy) {
 		p.IPVersion = "v4"
 	}
 	switch strings.TrimSpace(p.PhoneMode) {
-	case "wifi", "cellular", "volte":
+	case "wifi", "cellular", "volte", "modem_voice":
 		p.PhoneMode = strings.TrimSpace(p.PhoneMode)
 	default:
 		p.PhoneMode = "wifi"

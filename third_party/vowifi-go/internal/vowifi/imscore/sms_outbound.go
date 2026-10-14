@@ -186,9 +186,13 @@ func (s *Service) executeSMSDelivery(
 		}
 	}
 	outcome.DeliveryState = successfulSMSDeliveryState(ackedParts, len(parts))
-	if shouldSendTGSuccess(ctx) {
-		s.publishOutboundSMS(environment.recipient, environment.text, len(parts))
-	}
+	s.publishOutboundSMS(
+		environment.messageID,
+		environment.recipient,
+		environment.text,
+		len(parts),
+		shouldSendTGSuccess(ctx),
+	)
 	return outcome, nil
 }
 
@@ -521,7 +525,21 @@ func (s *Service) createOutboundDelivery(messageID, recipient, text string, tota
 	if s.delivery == nil {
 		return nil
 	}
-	if err := s.delivery.CreateSMSDelivery(messageID, s.cfg.IMSI, s.cfg.DeviceID, recipient, text, total, time.Now()); err != nil {
+	record := smsdelivery.DeliveryRecord{
+		MessageID: messageID, ICCID: s.cfg.ICCID, IMSI: s.cfg.IMSI,
+		DeviceID: s.cfg.DeviceID, Peer: recipient, Content: text,
+		PartsTotal: total, At: time.Now(),
+	}
+	var err error
+	if store, ok := s.delivery.(smsdelivery.IdentityStore); ok {
+		err = store.CreateSMSDeliveryForIdentity(record)
+	} else {
+		err = s.delivery.CreateSMSDelivery(
+			record.MessageID, record.IMSI, record.DeviceID,
+			record.Peer, record.Content, record.PartsTotal, record.At,
+		)
+	}
+	if err != nil {
 		return fmt.Errorf("imscore: create SMS delivery: %w", err)
 	}
 	return nil
@@ -550,12 +568,15 @@ func (s *Service) completeFailure(messageID string, part outboundSMSPart, sendEr
 	return fmt.Errorf("imscore: send SMS part %d: %w", part.number, sendErr)
 }
 
-func (s *Service) publishOutboundSMS(recipient, text string, total int) {
+func (s *Service) publishOutboundSMS(messageID, recipient, text string, total int, notify bool) {
 	at := time.Now()
-	s.publishLogNotification(formatVoWiFiSMSSentMessage(s.cfg.DeviceID, recipient, text, at, total))
+	if notify {
+		s.publishLogNotification(formatVoWiFiSMSSentMessage(s.cfg.DeviceID, recipient, text, at, total))
+	}
 	s.bus.Publish(&events.EventSMSSent{
 		DevID: s.cfg.DeviceID, TargetURI: recipient, Content: text,
-		Time: at, TotalParts: total,
+		Time: at, TotalParts: total, MessageID: messageID,
+		ICCID: s.cfg.ICCID, IMSI: s.cfg.IMSI,
 	})
 }
 

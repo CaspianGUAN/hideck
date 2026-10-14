@@ -13,7 +13,16 @@ type Registration struct {
 	Raw            string
 }
 
+// DTMFTransport is bound to one QMI owner, never re-resolved by device ID
+// between START, STOP or the unsupported-command fallback.
+type DTMFTransport interface {
+	VOICEBurstDTMF(context.Context, uint8, string) (uint8, error)
+	VOICEStartContinuousDTMF(context.Context, uint8, uint8) (uint8, error)
+	VOICEStopContinuousDTMF(context.Context, uint8) (uint8, error)
+}
+
 type Host interface {
+	BindVoiceDTMF(deviceID string) (DTMFTransport, error)
 	ExecuteAT(deviceID, cmd string, timeout time.Duration) (string, error)
 	StopSoftwareIMS(deviceID string) error
 	SetNativeIMS(ctx context.Context, deviceID string, enabled bool) error
@@ -28,6 +37,8 @@ type Host interface {
 	VOICEHangup(ctx context.Context, deviceID string, callID uint8) error
 	VOICEManageCalls(ctx context.Context, deviceID string, req qmi.VoiceManageCallsRequest) error
 	VOICEBurstDTMF(ctx context.Context, deviceID string, callID uint8, digits string) error // digits is a single DTMF key
+	VOICEStartContinuousDTMF(ctx context.Context, deviceID string, callID, digit uint8) error
+	VOICEStopContinuousDTMF(ctx context.Context, deviceID string, callID uint8) error
 	VOICEGetAllCallInfo(ctx context.Context, deviceID string) (*qmi.VoiceAllCallInfo, error)
 	OnVoiceStatus(deviceID string, handler func(*qmi.VoiceAllCallInfo)) error
 }

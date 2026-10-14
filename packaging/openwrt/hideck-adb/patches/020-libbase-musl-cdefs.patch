@@ -1,0 +1,13 @@
+From: HiDeck maintainers
+Subject: Allow libbase headers on musl without sys/cdefs.h
+
+This header is used only to detect Bionic. OpenWrt's musl does not provide it;
+retain detection on platforms that do, without requiring a glibc-only header.
+
+--- a/vendor/libbase/include/android-base/test_utils.h
++++ b/vendor/libbase/include/android-base/test_utils.h
+@@ -20 +20,3 @@
+-#include <sys/cdefs.h>
++#if __has_include(<sys/cdefs.h>)
++#include <sys/cdefs.h>
++#endif

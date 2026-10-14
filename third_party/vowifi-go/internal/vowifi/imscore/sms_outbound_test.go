@@ -40,15 +40,27 @@ type capturedDeliveryPart struct {
 	rpMR      int
 }
 
-func (s *captureDeliveryStore) CreateSMSDelivery(messageID, imsi, deviceID, peer, content string, partsTotal int, _ time.Time) error {
+func (s *captureDeliveryStore) CreateSMSDelivery(
+	messageID, imsi, deviceID, peer, content string,
+	partsTotal int,
+	_ time.Time,
+) error {
+	return s.CreateSMSDeliveryForIdentity(DeliveryRecord{
+		MessageID: messageID, IMSI: imsi, DeviceID: deviceID,
+		Peer: peer, Content: content, PartsTotal: partsTotal,
+	})
+}
+
+func (s *captureDeliveryStore) CreateSMSDeliveryForIdentity(record DeliveryRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.createError != nil {
 		return s.createError
 	}
 	s.created = &DeliveryStatus{
-		MessageID: messageID, IMSI: imsi, DeviceID: deviceID,
-		Peer: peer, Content: content, PartsTotal: partsTotal, State: smsDeliveryStatePending,
+		MessageID: record.MessageID, ICCID: record.ICCID, IMSI: record.IMSI,
+		DeviceID: record.DeviceID, Peer: record.Peer, Content: record.Content,
+		PartsTotal: record.PartsTotal, State: smsDeliveryStatePending,
 	}
 	return nil
 }
@@ -191,10 +203,13 @@ func TestSendOutboundSMSWaitsForSIPSuccess(t *testing.T) {
 	assertIMSEventTypes(t, subscriber, "SMSDeliveryUpdated", "LogNotify")
 	event := <-subscriber.events
 	sent, ok := event.(*events.EventSMSSent)
-	if !ok || sent.TargetURI != "+447700900123" || sent.Content != "hello" || sent.TotalParts != 1 {
+	if !ok || sent.TargetURI != "+447700900123" || sent.Content != "hello" || sent.TotalParts != 1 ||
+		sent.ICCID != "8944100000000000001" || sent.IMSI != "234102356143376" {
 		t.Fatalf("sent event = %#v", event)
 	}
-	if store.created == nil || store.created.Peer != "+447700900123" || len(store.partStates) != 1 || store.partStates[0] != smsDeliveryStatePending {
+	if store.created == nil || store.created.Peer != "+447700900123" ||
+		store.created.ICCID != "8944100000000000001" || len(store.partStates) != 1 ||
+		store.partStates[0] != smsDeliveryStatePending {
 		t.Fatalf("delivery store = %+v, parts = %v", store.created, store.partStates)
 	}
 	if len(store.sipResults) != 1 || store.sipResults[0].code != 200 || store.sipResults[0].state != smsDeliveryStatePending {
@@ -202,6 +217,25 @@ func TestSendOutboundSMSWaitsForSIPSuccess(t *testing.T) {
 	}
 	if store.reportCalls != 0 || store.created.State != smsDeliveryStatePending {
 		t.Fatalf("SIP acceptance fabricated a delivery report: calls=%d status=%+v", store.reportCalls, store.created)
+	}
+}
+
+func TestSendOutboundSMSSuppressesNotificationButPublishesSentEvent(t *testing.T) {
+	service, subscriber, _ := newOutboundSMSTestService(t)
+	service.transport.SetSendFn(func(request string) error {
+		service.transport.DeliverResponse(registerResponseForRequest(request, 200, nil))
+		return nil
+	})
+
+	ctx := withSuppressTGSuccess(context.Background(), true)
+	if _, err := service.SendSMSWithResult(ctx, "+447700900123", "hello"); err != nil {
+		t.Fatal(err)
+	}
+	assertIMSEventTypes(t, subscriber, "SMSSendAccepted", "SMSDeliveryUpdated", "SMSSent")
+	select {
+	case event := <-subscriber.events:
+		t.Fatalf("unexpected event after suppressed SMS success: %#v", event)
+	case <-time.After(20 * time.Millisecond):
 	}
 }
 
@@ -573,7 +607,8 @@ func newOutboundSMSTestService(t *testing.T) (*Service, *captureIMSEventSubscrib
 	bus.Subscribe(subscriber)
 	store := &captureDeliveryStore{}
 	service, err := New(&IMSConfig{
-		DeviceID: "wwan0", IMSI: "234102356143376", IMPI: "234102356143376@ims.example",
+		DeviceID: "wwan0", ICCID: "8944100000000000001", IMSI: "234102356143376",
+		IMPI: "234102356143376@ims.example",
 		IMPU: "sip:234102356143376@ims.example", Domain: "ims.example", SMSC: "+447802002606",
 		LocalIP: net.IPv4(10, 0, 0, 2), LocalPort: 5060, Transport: "tcp", EventBus: bus, DeliveryStore: store,
 	})

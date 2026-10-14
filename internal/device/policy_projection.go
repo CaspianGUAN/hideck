@@ -3,7 +3,6 @@ package device
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/yibaiba/hideck/internal/backend"
 	"github.com/yibaiba/hideck/internal/cardpolicy"
@@ -81,76 +80,6 @@ func applyPolicyToWorker(w *Worker, p cardpolicy.Policy) error {
 	}
 	w.setCellularRadioSuppressed(shouldSuppressCellularRadio(w.Config))
 	return nil
-}
-
-type policyApplyResult struct {
-	Applied bool
-	ICCID   string
-	Reason  string
-	Err     error
-}
-
-// resolveAndApplyPolicy 解析 worker 当前 ICCID 的策略，投影并复用现有 apply 路径。
-func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyResult {
-	if p == nil || worker == nil || p.policyResolver == nil {
-		return policyApplyResult{}
-	}
-	iccid := worker.CurrentICCID()
-	if iccid == "" {
-		logger.Info("跳过策略投影：ICCID 未就绪", "device", worker.ID, "reason", reason)
-		return policyApplyResult{Reason: "iccid_empty"}
-	}
-	pol, err := p.policyResolver.Resolve(iccid)
-	if err != nil {
-		logger.Warn("解析卡策略失败", "device", worker.ID, "iccid", iccid, "err", err)
-		return policyApplyResult{ICCID: iccid, Reason: "resolve_failed", Err: err}
-	}
-	if err := applyPolicyToWorker(worker, pol); err != nil {
-		logger.Warn("投影卡策略失败", "device", worker.ID, "iccid", iccid, "err", err)
-		return policyApplyResult{ICCID: iccid, Reason: "apply_failed", Err: err}
-	}
-	effective := worker.Config
-	logger.Info("已投影卡策略", "device", worker.ID, "iccid", iccid,
-		"network", effective.NetworkEnabled, "vowifi", effective.VoWiFiEnabled,
-		"airplane", effective.AirplaneEnabled, "reason", reason)
-
-	// 三态分支：VoWiFi / 纯飞行 / 在线(含连网)。射频模式按策略真正切换，
-	// 补齐此前“airplane 字段被投影但从不执行”的缺口。
-	switch {
-	case effective.AirplaneEnabled:
-		// 飞行优先：蜂窝软件电话可以保持开启，只关射频和流量。
-		p.enterAirplaneModeFromPolicy(worker, reason)
-	case PhoneServiceEnabled(effective) && PhoneModeCampsOnCell(effective.PhoneMode):
-		// 蜂窝软件电话 / 原生 VoLTE：射频保持在线以驻网。网络开着才连上网数据。
-		p.exitAirplaneModeIfNeeded(worker, reason)
-		if err := p.applyNetworkPreference(worker); err != nil {
-			logger.Warn("应用网络偏好失败", "device", worker.ID, "err", err)
-		}
-	case PhoneServiceEnabled(effective):
-		// WiFi calling：先关射频，再停数据。不要等 VoWiFi 启动后再补飞。
-		p.enterAirplaneModeFromPolicy(worker, reason)
-		if err := p.applyNetworkPreference(worker); err != nil {
-			logger.Warn("应用网络偏好失败", "device", worker.ID, "err", err)
-		}
-	default:
-		// 在线待机或连网：飞行关着就驻网；网络开关只决定是否拉起数据。
-		p.exitAirplaneModeIfNeeded(worker, reason)
-		if err := p.applyNetworkPreference(worker); err != nil {
-			logger.Warn("应用网络偏好失败", "device", worker.ID, "err", err)
-		}
-	}
-	if IsNativeVoLTEMode(effective.PhoneMode) && PhoneServiceEnabled(effective) && !effective.AirplaneEnabled {
-		p.clearDesiredVoWiFiRecoverState(worker.ID)
-		p.scheduleNativeVoLTE(worker.ID, reason)
-	} else {
-		p.stopNativeVoLTE(worker.ID, reason)
-		if PhoneServiceEnabled(effective) && !cellularSoftwarePhoneHeld(worker, pol) {
-			p.scheduleDesiredVoWiFiRecover(worker.ID, reason, time.Now())
-		} else {
-			p.clearDesiredVoWiFiRecoverState(worker.ID)
-		}
-	}
-	return policyApplyResult{Applied: true, ICCID: iccid, Reason: reason}
 }
 
 func withConnectHoldRF(cfg config.DeviceConfig) config.DeviceConfig {

@@ -208,10 +208,10 @@ test('volte with software phone does not lock flight', async () => {
 test('card policy puts a start switch under wifi calling instead of only a mode picker', async () => {
   const panel = await readFile(new URL('../src/components/CardPolicyPanel.vue', import.meta.url), 'utf8')
   const inline = await readFile(new URL('../src/components/EsimCardPolicyInline.vue', import.meta.url), 'utf8')
-  assert.match(panel, /<strong>通话方式<\/strong>[\s\S]*切换会按该方式启动[\s\S]*phone_mode \?\? 'wifi'\) === 'wifi' \? '启动' : '软件电话'[\s\S]*onVoWiFiToggle/)
+  assert.match(panel, /<strong>通话方式<\/strong>[\s\S]*模组直拨[\s\S]*phone_mode \?\? 'wifi'\) === 'wifi' \? '启动' : '电话服务'[\s\S]*onVoWiFiToggle/)
   assert.doesNotMatch(panel, /只选路径/)
   assert.match(inline, />通话方式</)
-  assert.match(inline, /phone_mode \?\? 'wifi'\) === 'wifi' \? '启动' : '软件电话'[\s\S]*onVoWiFiToggle/)
+  assert.match(inline, /phone_mode \?\? 'wifi'\) === 'wifi' \? '启动' : '电话服务'[\s\S]*onVoWiFiToggle/)
 })
 
 test('turning wifi calling off keeps the wifi path and only stops the service', async () => {

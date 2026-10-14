@@ -37,8 +37,10 @@ test('conversation pane exposes real runtime context and explicit message status
   assert.match(conversationHeader, /context\.operatorLabel/)
   assert.match(conversationHeader, /context\.smsLabel/)
   assert.match(conversationHeader, /context\.imsLabel/)
-  assert.match(messageTimeline, /if \(message\.status === 2\) return '已发送'/)
+  assert.match(messageTimeline, /if \(message\.status === 2\) return '已提交'/)
   assert.match(messageTimeline, /if \(message\.status === 3\) return '发送失败'/)
+  assert.match(smsView, /号码会原样提交；发送国际号码时请明确输入 \+ 国家码。/)
+  assert.doesNotMatch(smsView, /短信已按本卡地区提交至/)
   assert.match(messageTimeline, /max-width: 64%/)
 })
 

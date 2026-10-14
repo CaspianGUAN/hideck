@@ -135,8 +135,20 @@ func (s *wifiCallingHealthStore) Observe(deviceID string, state runtimehost.Stat
 	}
 	session.lastObservedAt = at
 	if session.startedAt.IsZero() {
+		if session.currentState == "pending" && healthState(state) == "unavailable" {
+			session.start(at, "unavailable", healthReason(state))
+			return
+		}
+		if state.SMSRXPending && state.IMSReady {
+			session.currentState = "pending"
+			session.currentReason = healthReason(state)
+			return
+		}
 		if !wifiCallingMeasurable(state) {
 			session.currentState = "checking"
+			if healthState(state) == "unavailable" {
+				session.currentState = "unavailable"
+			}
 			session.currentReason = healthReason(state)
 			return
 		}

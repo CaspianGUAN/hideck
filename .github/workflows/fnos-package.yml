@@ -1,0 +1,92 @@
+name: Build fnOS package
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Published Docker release with modem voice dependencies'
+        required: true
+      http_port:
+        description: 'HiDeck management HTTP port'
+        required: true
+        default: '7575'
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      image_digest:
+        required: true
+        type: string
+      source_revision:
+        required: true
+        type: string
+      http_port:
+        default: '7575'
+        type: string
+  pull_request:
+    paths:
+      - 'packaging/fnos/**'
+      - 'packaging/tests/**'
+      - 'config/config.example.yaml'
+      - '.github/actions/setup-fnpack/**'
+      - '.github/workflows/fnos-package.yml'
+      - '.github/workflows/docker-publish.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package and lifecycle tests
+        run: timeout 60 python3 -B -m unittest discover -s packaging/tests -v
+      - uses: ./.github/actions/setup-fnpack
+      - name: Real fnpack and Compose format checks (test fixture, not a release)
+        run: timeout 90 python3 -B packaging/fnos/test_package.py --fnpack "$FNPACK"
+
+  package:
+    if: github.event_name != 'pull_request'
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      PACKAGE_VERSION: ${{ inputs.version }}
+      HTTP_PORT: ${{ inputs.http_port }}
+      IMAGE_DIGEST: ${{ inputs.image_digest }}
+      SOURCE_REVISION: ${{ inputs.source_revision }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - uses: ./.github/actions/setup-fnpack
+      - name: Verify pinned image, matching source and both architectures; build FPK
+        shell: bash
+        run: |
+          arguments=(--version "$PACKAGE_VERSION" --http-port "$HTTP_PORT" --fnpack "$FNPACK" --output dist/fnos)
+          if [ -n "$IMAGE_DIGEST" ]; then arguments+=(--image-digest "$IMAGE_DIGEST"); fi
+          if [ -n "$SOURCE_REVISION" ]; then arguments+=(--source-revision "$SOURCE_REVISION"); fi
+          timeout 600 python3 -B packaging/fnos/build.py "${arguments[@]}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hideck-fnos-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/fnos/*
+          if-no-files-found: error
+      - name: Upload FPK to the existing GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_tag="v${PACKAGE_VERSION#v}"
+          gh release view "$release_tag" >/dev/null
+          gh release upload "$release_tag" dist/fnos/*.fpk dist/fnos/*.fpk.sha256 --clobber

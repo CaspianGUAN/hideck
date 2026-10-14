@@ -3,6 +3,7 @@ mnc: "87"
 id: lebara_uk_23487
 device_model: rmx3366
 dpd_interval_seconds: 120
+ike_rekey_interval_seconds: 9000
 ike_proposals:
   - aes256-sha512-prfsha512-modp2048
   - aes256-sha256-prfsha512-modp2048

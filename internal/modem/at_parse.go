@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/yibaiba/hideck/pkg/simidentity"
 	"github.com/yibaiba/hideck/pkg/smscodec"
 )
 
@@ -118,10 +119,7 @@ func parseQCCID(resp string) string {
 		return ""
 	}
 	if idx := strings.IndexByte(line, ':'); idx >= 0 {
-		iccid := strings.TrimSpace(line[idx+1:])
-		iccid = strings.Trim(iccid, "\"")
-		iccid = strings.TrimRight(iccid, "Ff")
-		return iccid
+		return simidentity.CanonicalICCID(line[idx+1:])
 	}
 	return ""
 }

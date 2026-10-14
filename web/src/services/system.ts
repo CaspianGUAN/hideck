@@ -132,9 +132,11 @@ export type NotificationsSettingsResponse = {
   webhook?: Partial<WebhookSettings>
   bark?: Partial<BarkSettings>
   wecom?: Partial<WeComSettings>
+  device_filters?: Record<string, string[]>
 }
 
 export type SaveNotificationsPayload = {
+  device_filters?: Record<string, string[]>
   telegram: {
     enabled: boolean
     bot_token: string

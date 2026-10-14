@@ -1,0 +1,51 @@
+#!/bin/sh
+set -eu
+
+fail() {
+  printf '%s\n' "$1" >&2
+  if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then printf '%s\n' "$1" > "$TRIM_TEMP_LOGFILE"; fi
+  exit 1
+}
+
+for directory in "${TRIM_APPDEST:-}" "${TRIM_PKGETC:-}"; do
+  case "$directory" in /*) ;; *) fail '缺少飞牛应用路径，不能配置桌面入口。' ;; esac
+done
+entry_file="$TRIM_PKGETC/fnos-entry.conf"
+for file in "$entry_file" "$TRIM_APPDEST/ui/config"; do
+  if { [ -e "$file" ] || [ -L "$file" ]; } && [ ! -f "$file" ]; then
+    fail '桌面入口配置路径不是有效文件；未覆盖。'
+  fi
+done
+protocol=http
+port=${TRIM_SERVICE_PORT:?fnOS service port is required}
+mode=${1:-}
+case "$mode" in apply|validate|restore) ;; *) fail '不支持的桌面入口配置操作。' ;; esac
+
+# Restart/upgrade restore persisted choices, never overwrite them with stale wizard defaults.
+if [ "$mode" != restore ] && { [ "${wizard_entry_protocol+x}" ] || [ "${wizard_entry_port+x}" ]; }; then
+  protocol=${wizard_entry_protocol:-}
+  port=${wizard_entry_port:-}
+elif [ -f "$entry_file" ]; then
+  IFS='|' read -r protocol port extra < "$entry_file" || fail '桌面入口配置无法读取。'
+  [ -z "$extra" ] || fail '桌面入口配置格式无效。'
+elif [ -e "$entry_file" ] || [ -L "$entry_file" ]; then
+  fail '桌面入口配置不是有效文件；未覆盖。'
+fi
+
+case "$protocol" in http|https) ;; *) fail '桌面入口协议只能是 http 或 https。' ;; esac
+case "$port" in ''|*[!0-9]*|0*) fail '桌面入口端口必须为 1 到 65535 的整数。' ;; esac
+[ "${#port}" -le 5 ] && [ "$port" -le 65535 ] || fail '桌面入口端口必须为 1 到 65535 的整数。'
+[ "$mode" != validate ] || exit 0
+
+umask 077
+entry_tmp=$(mktemp "$TRIM_PKGETC/.fnos-entry.XXXXXX")
+ui_tmp=''
+trap 'rm -f "$entry_tmp"; [ -z "$ui_tmp" ] || rm -f "$ui_tmp"' EXIT
+trap 'exit 1' HUP INT TERM
+ui_tmp=$(mktemp "$TRIM_APPDEST/ui/.config.XXXXXX")
+printf '%s|%s\n' "$protocol" "$port" > "$entry_tmp"
+# Both interpolated values have strict allowlists; no raw wizard text enters JSON or shell.
+printf '{".url":{"hideck.main":{"title":"HiDeck","icon":"images/icon_{0}.png","type":"url","protocol":"%s","port":"%s","url":"/","allUsers":false,"control":{"accessPerm":"readonly"}}}}\n' "$protocol" "$port" > "$ui_tmp"
+chmod 644 "$ui_tmp"
+mv -f "$entry_tmp" "$entry_file" || fail '无法保存桌面入口配置。'
+mv -f "$ui_tmp" "$TRIM_APPDEST/ui/config" || fail '无法更新桌面入口，请检查应用目录权限。'

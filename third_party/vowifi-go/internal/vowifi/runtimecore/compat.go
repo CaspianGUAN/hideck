@@ -266,6 +266,8 @@ func carrierPlanFromCompatibility(value carrier.EffectiveCarrierConfig) policy.C
 		DPDKeepaliveIntervalSeconds:   value.DPDKeepaliveIntervalSeconds,
 		ReauthIntervalSeconds:         value.ReauthIntervalSeconds,
 		IKERekeyIntervalSeconds:       value.IKERekeyIntervalSeconds,
+		WithholdDeviceIdentity:        value.WithholdDeviceIdentity,
+		KeepChildSAOnRekeyDecline:     value.KeepChildSAOnRekeyDecline,
 		SMSRoutingMethod:              value.SMSRoutingMethod, SMSRoutingGW: value.SMSRoutingGW,
 		ForceSMSCAuth: value.ForceSMSCAuth,
 	}

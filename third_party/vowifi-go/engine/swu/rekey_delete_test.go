@@ -13,12 +13,13 @@ func TestPeerDeleteOfActiveChildSAIsAcknowledgedAndSurfaced(t *testing.T) {
 	session.controlMu.Lock()
 	session.controlRunning = false
 	session.controlMu.Unlock()
-	request := encryptedPeerDeleteRequest(t, session, ikev2.ProtoESP, spiBytes(session.espLocalSPI))
+	// The peer names its inbound SPI (our espRemoteSPI); we answer with ours.
+	request := encryptedPeerDeleteRequest(t, session, ikev2.ProtoESP, spiBytes(session.espRemoteSPI))
 	err := session.handlePeerInformational(request)
 	if err == nil || err.Error() != "swu: peer deleted the active CHILD_SA" {
 		t.Fatalf("handlePeerInformational error = %v", err)
 	}
-	assertChildSADeleteResponse(t, session, transport, session.espRemoteSPI)
+	assertChildSADeleteResponse(t, session, transport, session.espLocalSPI)
 }
 
 func TestPeerDeleteOfActiveIKESAIsAcknowledgedAndSurfaced(t *testing.T) {

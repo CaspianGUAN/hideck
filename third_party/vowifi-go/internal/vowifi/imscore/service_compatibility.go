@@ -40,6 +40,7 @@ func deregisterAttemptTimeout(ctx context.Context) time.Duration {
 	}
 	return timeout
 }
+
 // Status restores the v1.5.5 map status API.
 func (s *Service) Status() map[string]interface{} {
 	return s.captureStatusSnapshot().ToMap()

@@ -28,7 +28,10 @@ func TestVoWiFiDeliveryStoreReportsMatchedPart(t *testing.T) {
 
 	store := vowifiDeliveryStore{}
 	now := time.Now()
-	if err := store.CreateSMSDelivery("message-1", "imsi-1", "wwan0", "+10086", "hello", 1, now); err != nil {
+	if err := store.CreateSMSDeliveryForIdentity(messaging.DeliveryRecord{
+		MessageID: "message-1", ICCID: "iccid-1", IMSI: "imsi-1",
+		DeviceID: "wwan0", Peer: "+10086", Content: "hello", PartsTotal: 1, At: now,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.UpsertSMSDeliveryPart("message-1", 1, "call-1", 17, "pending", now); err != nil {
@@ -85,7 +88,10 @@ func TestVoWiFiDeliveryStoreRejectsMismatchedInReplyTo(t *testing.T) {
 
 	store := vowifiDeliveryStore{}
 	now := time.Now()
-	if err := store.CreateSMSDelivery("message-1", "imsi-1", "wwan0", "+10086", "hello", 1, now); err != nil {
+	if err := store.CreateSMSDeliveryForIdentity(messaging.DeliveryRecord{
+		MessageID: "message-1", ICCID: "iccid-1", IMSI: "imsi-1",
+		DeviceID: "wwan0", Peer: "+10086", Content: "hello", PartsTotal: 1, At: now,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.UpsertSMSDeliveryPart("message-1", 1, "call-1", 17, "pending", now); err != nil {
@@ -100,7 +106,7 @@ func TestVoWiFiDeliveryStoreRejectsMismatchedInReplyTo(t *testing.T) {
 func assertInboundFragmentStoreRoundTrip(t *testing.T, store vowifiDeliveryStore, at time.Time) {
 	t.Helper()
 	scope := messaging.InboundFragmentScope{
-		Owner:      messaging.InboundFragmentOwner{DeviceID: "wwan0", IMSI: "imsi-1"},
+		Owner:      messaging.InboundFragmentOwner{DeviceID: "wwan0", ICCID: "8944100000000000001", IMSI: "imsi-1"},
 		SessionKey: "sender=giffgaff|ref=198",
 	}
 	result, err := store.SaveInboundFragment(scope, messaging.InboundFragment{

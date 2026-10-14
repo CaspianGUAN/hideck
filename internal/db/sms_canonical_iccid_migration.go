@@ -22,18 +22,18 @@ func MigrateSMSCanonicalICCID(database *gorm.DB) error {
 		return nil
 	}
 	return database.Transaction(func(tx *gorm.DB) error {
-		affected, err := canonicalizeSMSMessageRows(tx)
+		affected, err := canonicalizeSMSMessageRows(tx, nil)
 		if err != nil {
 			return err
 		}
-		if err := canonicalizeSMSDeliveryRows(tx); err != nil {
+		if err := canonicalizeSMSDeliveryRows(tx, nil); err != nil {
 			return err
 		}
-		return mergeCanonicalSMSContacts(tx, affected)
+		return mergeCanonicalSMSContacts(tx, affected, nil)
 	})
 }
 
-func canonicalizeSMSMessageRows(tx *gorm.DB) (map[smsContactIdentity]struct{}, error) {
+func canonicalizeSMSMessageRows(tx *gorm.DB, aliases map[string]string) (map[smsContactIdentity]struct{}, error) {
 	var rows []smsRawIdentity
 	if err := tx.Model(&SMS{}).Distinct("iccid", "peer").Find(&rows).Error; err != nil {
 		return nil, err
@@ -41,7 +41,7 @@ func canonicalizeSMSMessageRows(tx *gorm.DB) (map[smsContactIdentity]struct{}, e
 	affected := make(map[smsContactIdentity]struct{})
 	updates := make(map[string]string)
 	for _, row := range rows {
-		canonical := CanonicalICCID(row.ICCID)
+		canonical := resolveICCIDAlias(row.ICCID, aliases)
 		if canonical == "" || canonical == row.ICCID {
 			continue
 		}
@@ -58,13 +58,13 @@ func canonicalizeSMSMessageRows(tx *gorm.DB) (map[smsContactIdentity]struct{}, e
 	return affected, nil
 }
 
-func canonicalizeSMSDeliveryRows(tx *gorm.DB) error {
+func canonicalizeSMSDeliveryRows(tx *gorm.DB, aliases map[string]string) error {
 	var rows []string
 	if err := tx.Model(&SMSDelivery{}).Distinct().Pluck("iccid", &rows).Error; err != nil {
 		return err
 	}
 	for _, raw := range rows {
-		canonical := CanonicalICCID(raw)
+		canonical := resolveICCIDAlias(raw, aliases)
 		if canonical == "" || canonical == raw {
 			continue
 		}
@@ -75,14 +75,14 @@ func canonicalizeSMSDeliveryRows(tx *gorm.DB) error {
 	return nil
 }
 
-func mergeCanonicalSMSContacts(tx *gorm.DB, affected map[smsContactIdentity]struct{}) error {
+func mergeCanonicalSMSContacts(tx *gorm.DB, affected map[smsContactIdentity]struct{}, aliases map[string]string) error {
 	var contacts []SMSContact
 	if err := tx.Find(&contacts).Error; err != nil {
 		return err
 	}
 	groups := make(map[smsContactIdentity][]SMSContact)
 	for _, contact := range contacts {
-		canonical := CanonicalICCID(contact.ICCID)
+		canonical := resolveICCIDAlias(contact.ICCID, aliases)
 		if canonical == "" {
 			continue
 		}

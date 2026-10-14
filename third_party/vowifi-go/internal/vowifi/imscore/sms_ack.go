@@ -180,6 +180,7 @@ func rpReportRejectRegistrar(err error) string {
 }
 
 func (s *Service) sendRPReportWithRetry(report rpReportRequest) {
+	checkpoint := s.captureSMSReceptionCheckpoint()
 	attempts, err := s.sendRPReportWithRetryPolicy(
 		report, rpReportInitialDelay, rpReportRetryDelay,
 	)
@@ -189,6 +190,7 @@ func (s *Service) sendRPReportWithRetry(report rpReportRequest) {
 	}
 	if err != nil {
 		s.rememberRejectedMTReport(report.Identity)
+		s.recordRegistrationSMSReportFailure(report.PeerConn, checkpoint)
 		s.triggerMTReportPCSCFRecovery(err)
 		deviceID := ""
 		if s != nil && s.cfg != nil {

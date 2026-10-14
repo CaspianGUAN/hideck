@@ -74,6 +74,7 @@ func (p *Pool) markQMIControlRecovered(worker *Worker, reason string) {
 }
 
 type modemRebootRecoveryOptions struct {
+	initialWorker          *Worker // Optional ownership guard for an asynchronous reset.
 	deviceID               string
 	reason                 string
 	delays                 []time.Duration
@@ -578,6 +579,9 @@ func (p *Pool) runModemRebootRecovery(opts modemRebootRecoveryOptions) {
 	if p == nil || opts.deviceID == "" {
 		return
 	}
+	if p.adbRecoveryReplaced(opts) {
+		return
+	}
 	generation, started := p.startModemRebootRecovery(opts.deviceID)
 	if !started {
 		if opts.transportEventObserved && p.transportRecovery != nil {
@@ -619,8 +623,12 @@ func (p *Pool) runModemRebootRecovery(opts modemRebootRecoveryOptions) {
 		p.lifecycle.BeginRecovery(opts.deviceID, LifecyclePhaseUSBWait, opts.reason, qmiLifecycleRecoveryTTL)
 	}
 	if opts.removeBeforeScan {
-		if err := p.RemoveWorker(opts.deviceID); err != nil {
+		if err := p.removeInitialRecoveryWorker(opts); err != nil {
 			logger.Debug("模组重启恢复：旧 Worker 已不存在", "device", opts.deviceID, "err", err)
+			if opts.initialWorker != nil {
+				logger.Warn("ADB 重启恢复停止，未继续替换 Worker", "device", opts.deviceID, "err", err)
+				return
+			}
 		}
 	}
 	for round, delay := range opts.delays {
@@ -633,6 +641,9 @@ func (p *Pool) runModemRebootRecovery(opts modemRebootRecoveryOptions) {
 			return
 		}
 		p.waitModemRebootRecoveryTrigger(opts.deviceID, delay)
+		if !opts.removeBeforeScan && p.adbRecoveryReplaced(opts) {
+			return
+		}
 		if p.ctx.Err() != nil || !p.modemRebootRecoveryStillCurrent(opts.deviceID, generation) {
 			return
 		}
@@ -672,7 +683,7 @@ func (p *Pool) runModemRebootRecovery(opts modemRebootRecoveryOptions) {
 		} else {
 			err = p.rescanAndReconnect(rescanReconnectOptions{
 				targetDeviceID: opts.deviceID,
-				manualReboot:   strings.TrimSpace(opts.reason) == "manual_reboot",
+				manualReboot:   strings.TrimSpace(opts.reason) == "manual_reboot" || opts.reason == modemADBRebootReason,
 			})
 		}
 		if err != nil {
