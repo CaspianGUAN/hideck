@@ -92,7 +92,12 @@ func (s *Service) registerLocked(ctx context.Context) error {
 	if !hadBinding {
 		recoveryGeneration = s.registrarPenalties.recoveryGeneration()
 	}
+	// A refresh keeps the binding usable while it runs; reporting it as a
+	// fresh registration made every refresh show up as an outage.
 	s.regState = regRegistering
+	if hadBinding {
+		s.regState = regReregister
+	}
 	s.registerDownlinkBaseline = s.downlinkCheckpointLocked()
 	s.lastRegisterTraceID = common.TraceID(ctx)
 	s.lastRegisterAttemptAt = time.Now()

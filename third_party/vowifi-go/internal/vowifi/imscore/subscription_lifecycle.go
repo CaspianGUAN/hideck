@@ -147,7 +147,7 @@ func (s *Service) subscriptionAttemptPendingLocked(mwi bool) bool {
 
 func (s *Service) subscriptionResultCurrentLocked(result subscriptionResult) bool {
 	// An in-place REGISTER refresh does not retire the existing subscription.
-	registered := s.regState == regRegistered || s.regState == regRegistering
+	registered := s.regState == regRegistered || s.regState == regRegistering || s.regState == regReregister
 	return !s.stopped() && registered && result.context.subscriptionContext == s.subscriptionContextLocked()
 }
 

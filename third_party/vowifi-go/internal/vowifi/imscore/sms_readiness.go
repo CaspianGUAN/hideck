@@ -27,7 +27,7 @@ func (s *Service) SMSReadiness() SMSReadiness {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	registered := s.regState == regRegistered
+	registered := s.regState == regRegistered || s.regState == regReregister
 	profileReady := registered && s.regSession != nil &&
 		strings.TrimSpace(s.regSession.publicID) != "" &&
 		strings.TrimSpace(s.regSession.contactUser) != ""
