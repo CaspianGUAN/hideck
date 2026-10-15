@@ -314,9 +314,13 @@ func (s *Service) handleProtectedServerPushClosed() {
 	s.portSReconnectWaiting.Store(true)
 	s.protectedConnMu.Unlock()
 	if s.canAwaitOnDemandPortS() {
-		logging.Info("IMS protected server push closed cleanly; await peer port-s reconnect",
+		reason := "peer previously reopened port-s without a successful REGISTER"
+		if s.portSOnDemandByCarrier() {
+			reason = "carrier reopens port-s on demand"
+		}
+		logging.Info("IMS protected server push closed; await peer port-s reconnect",
 			"device", s.DeviceID(), "since_last_read", s.portSSinceLastRead(),
-			"reason", "peer previously reopened port-s without a successful REGISTER")
+			"reason", reason)
 		return
 	}
 	now := time.Now()
@@ -436,8 +440,27 @@ func (s *Service) portSReconnectWatchFired(generation uint64, registrar string) 
 // A historical peer reconnect is a compatibility hint for clean EOF, not a
 // guarantee that a reset or timed-out downlink can recover without REGISTER.
 func (s *Service) canAwaitOnDemandPortS() bool {
-	return s != nil && s.portSOnDemandObserved.Load() &&
+	if s == nil {
+		return false
+	}
+	if s.portSOnDemandByCarrier() {
+		return true
+	}
+	return s.portSOnDemandObserved.Load() &&
 		s.capturePortSSession().lastCloseKind == portSCloseEOF
+}
+
+// portSOnDemandByCarrier reports a carrier whose P-CSCF drops an idle port-s
+// connection and opens a new one when it has a request. AIS drops port-s
+// after about 3.5 minutes idle while the binding stays valid (a REGISTER
+// then fails with "AKA IP+Port conflict"). An iPhone on AIS sends no
+// keepalives, never closes the incoming connection and does not re-register
+// when it goes away (2026-10-08 capture), so HiDeck waits for the peer too.
+func (s *Service) portSOnDemandByCarrier() bool {
+	if s == nil || s.cfg == nil {
+		return false
+	}
+	return strings.HasPrefix(strings.TrimSpace(s.cfg.CarrierPresetID), "ais_th_")
 }
 
 func (s *Service) consumePortSReconnectWatch(generation uint64, registrar string) bool {
