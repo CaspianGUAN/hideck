@@ -103,3 +103,24 @@ func TestATTReliable183CarriesSDPAndLocationAsMultipart(t *testing.T) {
 		t.Fatalf("multipart body:\n%s", body)
 	}
 }
+
+func TestATTHandsetContactUsesRegisteredBinding(t *testing.T) {
+	var recipient sip.Uri
+	if err := sip.ParseUri("sip:ed156a21-231c-4c44-b38d-9966e7c38b93@[2600:380:4a9b:71bf:0:65:6f7a:7101]:62668;transport=tcp", &recipient); err != nil {
+		t.Fatal(err)
+	}
+	request := sip.NewRequest(sip.INVITE, recipient)
+	got := attHandsetContact(request).Value()
+	for _, want := range []string{
+		"<sip:ed156a21-231c-4c44-b38d-9966e7c38b93@[2600:380:4a9b:71bf:0:65:6f7a:7101]:62668;transport=tcp>",
+		`+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel"`,
+		"+g.3gpp.mid-call", "+g.3gpp.smsip", "+g.3gpp.srvcc-alerting", "text",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("Contact %q missing %q", got, want)
+		}
+	}
+	if strings.Contains(got, "gr=") {
+		t.Fatalf("Contact still uses the GRUU: %s", got)
+	}
+}

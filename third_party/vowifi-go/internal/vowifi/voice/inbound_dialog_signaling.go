@@ -62,6 +62,9 @@ func (a *Agent) answerStoredServerInviteResult(
 	if handset := a.applyAISHandsetHeaders(response, request, true); handset != nil {
 		answerContact = handset
 	}
+	if handset := a.applyATTHandsetContact(response, request); handset != nil {
+		answerContact = handset
+	}
 	dialog, err := a.dialog.AnswerServerInvite(
 		context.Background(), a.deviceID, invite,
 		imsendpoint.ServerInviteAnswerOptions{Response: response, Contact: answerContact},
@@ -107,6 +110,7 @@ func (a *Agent) rejectStoredServerInviteWithReason(
 	}
 	if statusCode > 100 && statusCode < 200 {
 		handset := a.applyAISHandsetHeaders(response, request, false) != nil
+		handset = a.applyATTHandsetContact(response, request) != nil || handset
 		if a.applyATTLocation(response, request) || handset {
 			logging.Info("IMS 来电临时响应原文", "call_id", call.CallID(), "sip", sipLogValue(response.String()))
 		}

@@ -52,3 +52,36 @@ func civicPIDF(entity, country string, now time.Time) string {
 		"<gp:usage-rules/>\r\n</gp:geopriv>\r\n</status>\r\n" +
 		"<dm:timestamp>" + now.UTC().Format("2006-01-02T15:04:05Z") + "</dm:timestamp>\r\n</tuple>\r\n</presence>\r\n"
 }
+
+// attHandsetContact is the Contact an iPhone puts in its AT&T MT responses:
+// the registered binding the INVITE was sent to, with the MMTel tags. AT&T
+// routes PRACK and ACK to this Contact; with the pub-GRUU no PRACK arrived
+// (2026-10-15), so the reliable 183 timed out.
+func attHandsetContact(request *sip.Request) *sip.ContactHeader {
+	if request == nil || strings.TrimSpace(request.Recipient.Host) == "" {
+		return nil
+	}
+	uri := *request.Recipient.Clone()
+	params := sip.NewParams()
+	params.Add("+g.3gpp.icsi-ref", aisHandsetMMTelICSI)
+	params.Add("+g.3gpp.mid-call", "")
+	params.Add("+g.3gpp.smsip", "")
+	params.Add("+g.3gpp.srvcc-alerting", "")
+	params.Add("text", "")
+	return &sip.ContactHeader{Address: uri, Params: params}
+}
+
+// applyATTHandsetContact replaces the Contact of an MT response toward AT&T
+// and returns it, or nil when the call is not on AT&T.
+func (a *Agent) applyATTHandsetContact(response *sip.Response, request *sip.Request) *sip.ContactHeader {
+	if a == nil || response == nil || !attHomeDomain(a.imsSnapshot().Realm) {
+		return nil
+	}
+	contact := attHandsetContact(request)
+	if contact == nil {
+		return nil
+	}
+	response.RemoveHeader("Contact")
+	response.AppendHeader(contact)
+	return contact
+}

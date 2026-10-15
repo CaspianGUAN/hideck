@@ -231,9 +231,11 @@ func (a *Agent) writeATTReliableProvisional(call *Call, status int, sdp string, 
 	response := call.BuildResponse(status, reason)
 	response.AppendHeader(sip.NewHeader("Require", "100rel"))
 	response.AppendHeader(sip.NewHeader("RSeq", strconv.FormatUint(uint64(rseq), 10)))
-	if contact := a.dialog.Context().CachedContactHdr; contact != nil {
-		response.RemoveHeader("Contact")
-		response.AppendHeader(contact.Clone())
+	if a.applyATTHandsetContact(response, request) == nil {
+		if contact := a.dialog.Context().CachedContactHdr; contact != nil {
+			response.RemoveHeader("Contact")
+			response.AppendHeader(contact.Clone())
+		}
 	}
 	a.applyATTLocation(response, request)
 	if sdp != "" {
