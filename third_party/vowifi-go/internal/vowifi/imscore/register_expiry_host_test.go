@@ -44,3 +44,30 @@ func TestRegistrationExpiresMatchesAISContactEcho(t *testing.T) {
 		t.Fatalf("expires=%v err=%v, want 2h from the echoed AIS Contact", got, err)
 	}
 }
+
+// AT&T (Red Pocket, 2026-10-09) echoes the iPhone Contact with expires
+// inserted before the trailing text tag.
+func TestRegistrationExpiresMatchesATTContactEcho(t *testing.T) {
+	contact := `<sip:[2600:380:84d1:5125:7356:4975:83dd:6a3e]:64603>;+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;+sip.instance="<urn:gsma:imei:35671411-769797-0>";text`
+	raw := strings.Join([]string{
+		"SIP/2.0 200 OK",
+		"Call-ID: jF9Dq7jNMGOKEGR2d3glfqY2",
+		"Via: SIP/2.0/TCP [2600:380:84d1:5125:7356:4975:83dd:6a3e]:64603;branch=z9hG4bKqNUa5VwVEpT5Wpn;received=2600:380:84d1:5125:7356:4975:83dd:6a3e;rport=63117",
+		"To: <sip:310280229262005@one.att.net>;tag=67abe7a5-6ac8751b2f16f59a",
+		"From: <sip:310280229262005@one.att.net>;tag=4J6Y9XM5zy",
+		"CSeq: 2 REGISTER",
+		`Contact: <sip:[2600:380:84d1:5125:7356:4975:83dd:6a3e]:64603>;+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;+sip.instance="<urn:gsma:imei:35671411-769797-0>";expires=2088;text`,
+		"Path: <sip:[2001:1890:1f8:21fe::1:2]:5060;access-type=3GPP-E-UTRAN-FDD;bidx=35789530;lr;ottag=ue_term>",
+		"P-Associated-URI: tel:+14807471509, sip:+14807471509@one.att.net",
+		"Content-Length: 0",
+		"", "",
+	}, "\r\n")
+	response, err := parseSIPResponse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := registrationExpires(response, contact, time.Hour)
+	if err != nil || got != 2088*time.Second {
+		t.Fatalf("expires=%v err=%v, want 2088s from the echoed AT&T Contact", got, err)
+	}
+}
