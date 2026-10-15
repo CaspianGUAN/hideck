@@ -221,6 +221,10 @@ func (s *Service) logInboundSIPRequest(request *sip.Request) {
 			"call_id", sipkit.FirstHeaderValue(request, "Call-ID", true),
 			"rack", sipkit.FirstHeaderValue(request, "RAck", true),
 			"reason", sipkit.FirstHeaderValue(request, "Reason", true))
+		if request.Method == sip.BYE || request.Method == sip.CANCEL {
+			// Who ended the call and why is only in the full request.
+			fields = append(fields, "sip", strings.Join(strings.Split(strings.TrimSpace(request.String()), "\r\n"), " | "))
+		}
 		logging.Info("IMS inbound SIP request", fields...)
 		return
 	}

@@ -83,5 +83,14 @@ func (a *Agent) applyATTHandsetContact(response *sip.Response, request *sip.Requ
 	}
 	response.RemoveHeader("Contact")
 	response.AppendHeader(contact)
+	// An iPhone lists the same Allow and Supported in its AT&T 18x and 200.
+	supported := aisHandsetSupported
+	if response.StatusCode >= 200 {
+		supported += ",timer"
+	}
+	response.RemoveHeader("Supported")
+	response.AppendHeader(sip.NewHeader("Supported", supported))
+	response.RemoveHeader("Allow")
+	response.AppendHeader(sip.NewHeader("Allow", aisHandsetAllow))
 	return contact
 }
