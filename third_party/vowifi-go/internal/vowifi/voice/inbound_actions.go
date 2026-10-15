@@ -31,6 +31,19 @@ func (a *Agent) AnswerWithSDP(callID, clientSDP string) (InboundAnswer, error) {
 		return InboundAnswer{}, err
 	}
 	_, imsAnswer := call.localSDPs()
+	attEarly, attEarlyDone := call.attEarlyAnswer()
+	if attEarly != "" {
+		// The SDP answer already went out in the reliable 183; the IMS side
+		// keeps it and the 200 carries no SDP.
+		clientLocal, _ := call.localSDPs()
+		call.setLocalSDP(clientLocal, attEarly)
+		imsAnswer = attEarly
+		if info, parseErr := ParseSDP([]byte(attEarly)); parseErr == nil {
+			if err := configureRelayDTMF(call.RTPRelay(), info); err != nil {
+				return InboundAnswer{}, err
+			}
+		}
+	}
 	reliable, precondition := call.inboundEarlyAnswerMode()
 	if precondition {
 		imsAnswer = ensureTerminatingPreconditions(call.remoteSDPValue(), imsAnswer)
@@ -60,7 +73,18 @@ func (a *Agent) AnswerWithSDP(callID, clientSDP string) (InboundAnswer, error) {
 		}
 		_, imsAnswer = call.localSDPs()
 	}
-	structured, err := a.answerStoredServerInvite(call, imsAnswer)
+	finalSDP := imsAnswer
+	if attEarly != "" {
+		if err := a.awaitATTEarlyAnswer(call, attEarlyDone); err != nil {
+			a.releaseInboundCall(call, err, false)
+			return InboundAnswer{}, err
+		}
+		if call.CallDirection() != callstate.DirectionInbound || call.IsTerminalState() {
+			return InboundAnswer{}, errors.New("voice: inbound call is not alerting")
+		}
+		finalSDP = ""
+	}
+	structured, err := a.answerStoredServerInvite(call, finalSDP)
 	if err != nil {
 		a.releaseInboundCall(call, err, false)
 		return InboundAnswer{}, err

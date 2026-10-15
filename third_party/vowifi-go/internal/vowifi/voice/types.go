@@ -145,6 +145,10 @@ type Call struct {
 	inboundPRACK               chan struct{}
 	inboundPreconditionPending bool
 	inboundPreconditionWait    chan struct{}
+	// attEarlySDP is the answer sent in the AT&T reliable 183; attEarlyDone
+	// closes once that 183 and the reliable 180 were acknowledged.
+	attEarlySDP  string
+	attEarlyDone chan struct{}
 }
 
 // Gateway bridges the local client (LAN side) to the IMS network. It owns

@@ -172,7 +172,15 @@ func (a *Agent) beginInboundInvite(call *Call, request imscore.InboundVoiceReque
 	if request.Request != nil {
 		logging.Info("IMS 来电 INVITE 原文", "call_id", call.CallID(), "sip", sipLogValue(request.Request.String()))
 	}
-	if reliable || precondition {
+	if a.attEarlyAnswerWanted(request, reliable, precondition) && request.ServerInvite != nil {
+		early, err := a.prepareATTEarlyAnswer(call)
+		if err != nil {
+			a.releaseInboundCall(call, err, false)
+			return 488, nil
+		}
+		logging.Info("IMS 来电按 AT&T iPhone 方式应答", "call_id", call.CallID(), "sdp", sdpLogValue(early))
+		go a.runATTEarlyAnswer(call, early)
+	} else if reliable || precondition {
 		logging.Info("IMS 来电等待可靠应答", "call_id", call.CallID(), "reliable", reliable, "precondition", precondition)
 	} else if err := a.respondInboundProvisional(call, 180); err != nil {
 		a.releaseInboundCall(call, err, false)
