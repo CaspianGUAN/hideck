@@ -162,6 +162,9 @@ func (s *Session) dispatchIKEPacket(
 		err = s.validateEstablishedIKEEnvelope(header, raw)
 	}
 	if err != nil {
+		if s.peerLostIKESA(header, raw, taskManager) {
+			return errPeerLostIKESA
+		}
 		s.dropInvalidIKE(raw, err)
 		return nil
 	}
@@ -336,7 +339,7 @@ func (s *Session) dropInvalidIKE(raw []byte, err error) {
 		return
 	}
 	s.Logger.Warn("dropped invalid IKE packet", zap.Int("bytes", len(raw)),
-		zap.String("head", hex.EncodeToString(raw[:min(len(raw), 32)])), zap.Error(err))
+		zap.String("head", hex.EncodeToString(raw[:min(len(raw), 40)])), zap.Error(err))
 }
 
 func (s *Session) failEstablishedControl(err error) {
