@@ -614,6 +614,13 @@ func (s *Service) sessionForRegisterAttempt() (*registerSession, error) {
 			serviceRoute: previous.serviceRoute, path: previous.path, template: previous.template,
 		}
 		s.mu.RUnlock()
+		if s.refreshOffersFreshClientSA() {
+			security, err := refreshSecurityOffer(session.security, session.template)
+			if err != nil {
+				return nil, err
+			}
+			session.security = security
+		}
 		return session, nil
 	}
 	s.mu.RUnlock()
