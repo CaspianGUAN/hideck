@@ -1,6 +1,8 @@
 package imscore
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -56,5 +58,24 @@ func TestOnlyAISRefreshesWithFreshOffer(t *testing.T) {
 	service.cfg.CarrierPresetID = "tmobile_us_310260"
 	if service.refreshOffersFreshClientSA() {
 		t.Fatal("T-Mobile refresh changed")
+	}
+}
+
+func TestAISRefreshReauthOnBusyPortsRegistersAfresh(t *testing.T) {
+	service := newProtectedKeepaliveTestService(t)
+	service.cfg.CarrierPresetID = "ais_th_52003"
+	reauth := fmt.Errorf("install SA: %w", errProtectedFlowNeedsFreshPorts)
+	if !service.needsFreshSecurityAssociation(true, reauth) {
+		t.Fatal("AIS refresh re-auth kept the abandoned SA")
+	}
+	if service.needsFreshSecurityAssociation(false, reauth) {
+		t.Fatal("initial registration was treated as a refresh")
+	}
+	if service.needsFreshSecurityAssociation(true, errors.New("timeout")) {
+		t.Fatal("unrelated refresh failure dropped the SA")
+	}
+	service.cfg.CarrierPresetID = "tmobile_us_310260"
+	if service.needsFreshSecurityAssociation(true, reauth) {
+		t.Fatal("T-Mobile refresh re-auth changed")
 	}
 }

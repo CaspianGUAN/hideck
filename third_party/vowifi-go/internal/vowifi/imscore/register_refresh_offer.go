@@ -1,6 +1,7 @@
 package imscore
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/policy"
@@ -43,4 +44,17 @@ func refreshSecurityOffer(current *securityAgreement, template policy.IMSRegiste
 	refreshed := *current
 	refreshed.clientHeader = buildTemplateSecurityClient(offer, template)
 	return &refreshed, nil
+}
+
+// needsFreshSecurityAssociation reports whether a failed REGISTER must drop
+// the SA and register again on new ports. Besides the IP+Port conflict,
+// AIS re-authenticates a refresh with a 401 whose new SA cannot be put on the
+// client port still carrying the old one, and from then on ignores requests
+// over the old SA (2026-10-17: it was kept, retried after 5 minutes, timed
+// out and the tunnel was rebuilt six minutes later).
+func (s *Service) needsFreshSecurityAssociation(hadBinding bool, err error) bool {
+	if akaIPPortConflict(err) {
+		return true
+	}
+	return hadBinding && errors.Is(err, errProtectedFlowNeedsFreshPorts) && s.refreshOffersFreshClientSA()
 }

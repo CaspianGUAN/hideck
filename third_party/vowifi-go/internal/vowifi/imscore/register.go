@@ -144,9 +144,9 @@ func (s *Service) registerLocked(ctx context.Context) error {
 	// The P-CSCF still holds the SA for this inner IP and port-c/port-s. Keeping
 	// that binding leaves port-s down, so the SMS receiver stays not ready.
 	// Drop the SA and register once on new ports.
-	if akaIPPortConflict(err) {
+	if s.needsFreshSecurityAssociation(hadBinding, err) {
 		logging.WarnRate("ims-aka-ip-port-conflict-"+s.DeviceID(), 30*time.Second,
-			"IMS REGISTER AKA IP+Port conflict; replacing security association",
+			"IMS REGISTER needs a new security association; registering on new ports",
 			"device", s.DeviceID(), "err", err)
 		if resetErr := s.resetRegistrationForPCSCFSwitch(); resetErr != nil {
 			err = errors.Join(err, resetErr)
